@@ -1,0 +1,52 @@
+{
+  "name": "@statewalker/resources",
+  "version": "0.0.1",
+  "description": "Resource management framework",
+  "keywords": [],
+  "homepage": "https://github.com/statewalker/statewalker-resources",
+  "author": {
+    "name": "Mikhail Kotelnikov",
+    "email": "mikhail.kotelnikov@gmail.com"
+  },
+  "license": "MIT",
+  "type": "module",
+  "files": [
+    "dist/**/package.json",
+    "dist/**/*.js",
+    "src/**/*.js",
+    "index.js"
+  ],
+  "module": "src/index.js",
+  "main": "src/index.js",
+  "jsdelivr": "dist/index.js",
+  "unpkg": "dist/index.js",
+  "exports": {
+    "umd": "./dist/index-umd.min.js",
+    "default": "./src/index.js"
+  },
+  "dependencies": {
+    "@statewalker/uris": "^0.2.5",
+    "@statewalker/adapters": "^0.1.0"
+  },
+  "devDependencies": {
+    "@statewalker/rollup": "^0.1.6",
+    "eslint": "^8",
+    "expect.js": "^0.3",
+    "mocha": "^10",
+    "rollup": "^3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git@github.com:statewalker/statewalker-resources.git"
+  },
+  "scripts": {
+    "eslint": "eslint src",
+    "rollup": "rollup -c",
+    "test": "mocha -R spec ./test/index.js && yarn eslint",
+    "prepublishOnly": "rm -rf dist && yarn test && yarn rollup"
+  },
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  }
+}
