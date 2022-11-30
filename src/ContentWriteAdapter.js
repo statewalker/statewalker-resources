@@ -1,13 +1,8 @@
-import ResourceAdapter from "./ResourceAdapter.js";
 import { parseUri } from "@statewalker/uris";
+import ResourceAdapter from "./ResourceAdapter.js";
+import RepositoryFilesAdapter from "./RepositoryFilesAdapter.js";
 
 export default class ContentWriteAdapter extends ResourceAdapter {
-
-  static newWriteAdapter(writeFile) {
-    return class UrlContentWriteAdapter extends ContentWriteAdapter {
-      async _writeFile(pathname, content) { await writeFile(pathname, content); }
-    }
-  }
 
   async writeContent(content) {
     const url = this.resource.url;
@@ -33,10 +28,9 @@ export default class ContentWriteAdapter extends ResourceAdapter {
     await this.writeContent(it);
   }
 
-  async _writeFile(/* pathname, async* content() */) {
-    await (async () => {
-      throw new Error('The "_writeFile" method should be overloaded in subclasses.');
-    })();
+  async _writeFile(pathname, content /* async* content() */) {
+    const filesAdapter = await this.repository.requireAdapter(RepositoryFilesAdapter);
+    await filesAdapter.writeFile(pathname, content);
   }
 
 }

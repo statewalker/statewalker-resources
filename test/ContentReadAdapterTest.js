@@ -1,5 +1,5 @@
 import { default as expect } from 'expect.js';
-import ResourceRepository from "../src/ResourceRepository.js";
+import Repository from "../src/Repository.js";
 import ContentReadAdapter from "../src/ContentReadAdapter.js";
 import TextAdapter from "../src/TextAdapter.js";
 // import testError from "./testError.js";
@@ -12,7 +12,7 @@ describe('ContentReadAdapter', () => {
 
   let repository;
   beforeEach(() => {
-    repository = new ResourceRepository();
+    repository = new Repository();
     repository.register('', ContentReadAdapter, class extends ContentReadAdapter {
       async* readContent() {
         const url = this.resource.url;

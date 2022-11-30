@@ -1,5 +1,5 @@
 import { default as expect } from 'expect.js';
-import ResourceRepository from "../src/ResourceRepository.js";
+import Repository from "../src/Repository.js";
 import TextAdapter from "../src/TextAdapter.js";
 
 // import { setLogLevel } from "@dynotes/logger";;
@@ -9,7 +9,7 @@ describe('ResourceAdapter', () => {
 
   let repository;
   beforeEach(() => {
-    repository = new ResourceRepository();
+    repository = new Repository();
   });
 
   it(`should be able to retrieve object adapters`, async () => {
