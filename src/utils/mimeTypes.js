@@ -26,6 +26,7 @@ export const mimeTypes = [
   { "extensions": ["js"], "mime": "text/javascript", "description": "JavaScript per the following specifications: https://html.spec.whatwg.org/multipage/#scriptingLanguages, https://html.spec.whatwg.org/multipage/#dependencies:willful-violation, https://datatracker.ietf.org/doc/draft-ietf-dispatch-javascript-mjs/" },
   { "extensions": ["json"], "mime": "application/json", "description": "JSON format" },
   { "extensions": ["jsonld"], "mime": "application/ld+json", "description": "JSON-LD format" },
+  { "extensions": ["jsx"], "mime": "text/jsx", "description": "JSX format" },
   { "extensions": ["mid", "midi"], "mime": "application/ld+json", "description": "Musical Instrument Digital Interface (MIDI)	audio/midi audio/x-midi" },
   { "extensions": ["mjs"], "mime": "text/javascript", "description": "JavaScript module" },
   { "extensions": ["mp3"], "mime": "audio/mpeg", "description": "MP3 audio" },
