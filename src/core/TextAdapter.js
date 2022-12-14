@@ -1,7 +1,7 @@
 import ResourceAdapter from "./ResourceAdapter.js";
 import ContentReadAdapter from "./ContentReadAdapter.js";
 import ContentWriteAdapter from "./ContentWriteAdapter.js";
-import { newReference } from "./utils/references.js";
+import { newReference } from "../utils/references.js";
 
 /**
  * This is the caching resource adapter providing access to the underlying text resource content.

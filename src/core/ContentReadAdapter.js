@@ -1,5 +1,5 @@
 import { parseUri } from "@statewalker/uris";
-import { fetchData } from "./utils/fetch.js";
+import { fetchData } from "../utils/fetch.js";
 import ResourceAdapter from "./ResourceAdapter.js";
 import RepositoryFilesAdapter from "./RepositoryFilesAdapter.js";
 

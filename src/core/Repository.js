@@ -1,5 +1,5 @@
 import { Adapters } from "@statewalker/adapters";
-import getMimeType from "./utils/getMimeType.js";
+import getMimeType from "../utils/getMimeType.js";
 import Resource from "./Resource.js";
 import Adaptable from "./Adaptable.js";
 
