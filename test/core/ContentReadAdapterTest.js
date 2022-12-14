@@ -1,7 +1,7 @@
 import { default as expect } from 'expect.js';
-import Repository from "../src/Repository.js";
-import ContentReadAdapter from "../src/ContentReadAdapter.js";
-import TextAdapter from "../src/TextAdapter.js";
+import Repository from "../../src/core/Repository.js";
+import ContentReadAdapter from "../../src/core/ContentReadAdapter.js";
+import TextAdapter from "../../src/core/TextAdapter.js";
 // import testError from "./testError.js";
 
 describe('ContentReadAdapter', () => {

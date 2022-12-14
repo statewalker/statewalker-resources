@@ -1,6 +1,6 @@
 import { default as expect } from 'expect.js';
-import Repository from "../src/Repository.js";
-import TextAdapter from "../src/TextAdapter.js";
+import Repository from "../../src/core/Repository.js";
+import TextAdapter from "../../src/core/TextAdapter.js";
 
 // import { setLogLevel } from "@dynotes/logger";;
 // setLogLevel('resources', 'debug');

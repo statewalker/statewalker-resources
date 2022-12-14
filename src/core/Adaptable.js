@@ -1,4 +1,4 @@
-import getTypePath from "./utils/getTypePath.js";
+import getTypePath from "../utils/getTypePath.js";
 
 export default class Adaptable {
   constructor(options = {}) {

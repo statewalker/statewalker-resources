@@ -1,10 +1,10 @@
 import { default as expect } from "expect.js";
-import ContentReadAdapter from "../src/ContentReadAdapter.js";
-import ContentWriteAdapter from "../src/ContentWriteAdapter.js";
-import Repository from "../src/Repository.js";
-import RepositoryFilesAdapter from "../src/RepositoryFilesAdapter.js";
-import TextAdapter from "../src/TextAdapter.js";
-import RepositoryInMemFilesAdapter from "../src/RepositoryInMemFilesAdapter.js";
+import ContentReadAdapter from "../../src/core/ContentReadAdapter.js";
+import ContentWriteAdapter from "../../src/core/ContentWriteAdapter.js";
+import Repository from "../../src/core/Repository.js";
+import RepositoryFilesAdapter from "../../src/core/RepositoryFilesAdapter.js";
+import TextAdapter from "../../src/core/TextAdapter.js";
+import RepositoryInMemFilesAdapter from "../../src/core/RepositoryInMemFilesAdapter.js";
 
 describe("RepositoryFilesAdapter", () => {
   let repository, files = {};
