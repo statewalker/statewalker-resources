@@ -18,7 +18,8 @@ describe('ContentReadAdapter', () => {
         const url = this.resource.url;
         const content = resources[url];
         if (!content) throw new Error(`Resource not found. URL: "${url}"`);
-        yield Buffer.from(content);
+        yield await new Blob([content]).arrayBuffer();
+        // yield Buffer.from(content);
       }
     });
   });

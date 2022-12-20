@@ -1,4 +1,4 @@
-export class Adapter {
+export default class Adapter {
 
   constructor(adaptable, options) {
     this._adaptable = adaptable;
