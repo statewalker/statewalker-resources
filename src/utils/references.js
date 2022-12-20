@@ -1,5 +1,5 @@
 /**
- * This method returns a function giving access to a "memoised" object. The retuend function 
+ * This method returns a function giving access to a "memoised" object. The returned function 
  * has a "reset" method and the "ref" field:
  * - `reference.reset()` - remove the current reference on the  memoised object
  * - `reference.ref` - this field contains the current WeakRef on the object

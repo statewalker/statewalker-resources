@@ -14,6 +14,22 @@ Using Resource Repositories it become possible to implement transformation tools
 
 If some functionalities are missing - it is very simple to add a new adapter implementing it. 
 
+## Adapters
+
+- GitAdapter - provide possibility to read/write remote repositories and access to their content locally;
+to access to the web uses CORSProxy and local content adapters
+- ESBuild - compiles TSX/TS to JS
+
+
+WebAdapters:
+- WebServerAdapter - provide possibility to register resources and dynamic code via routing; uses a plateform-specific HttpServer adapter 
+- CORSProxy - dynamic route injecting CORS headers; used mostly on the server
+
+
+Plateform-specific adapters (Node,Deno,Browser):
+- HTTPServerAdapter - make resources available over HTTP
+- FileServerAdapter - read/write/delete/enumerates files (on the local disk or remotely; ex: AWS S3)
+
 ## License
 
 [MIT](https://choosealicense.com/licenses/mit/)

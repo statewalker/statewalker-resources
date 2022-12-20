@@ -1,4 +1,4 @@
-import { Adapter } from "./Adapter.js";
+import Adapter from "./Adapter.js";
 
 export default class ResourceAdapter extends Adapter {
   get resource() { return this._adaptable; }

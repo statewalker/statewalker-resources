@@ -40,5 +40,7 @@ describe("RepositoryFilesAdapter", () => {
 
     text = await textAdapter.getText();
     expect(text).to.be(newText);
+
+    expect(text).to.eql(files["foo/bar/baz.txt"]);
   });
 });

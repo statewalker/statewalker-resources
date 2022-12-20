@@ -26,7 +26,6 @@ export const mimeTypes = [
   { "extensions": ["js"], "mime": "text/javascript", "description": "JavaScript per the following specifications: https://html.spec.whatwg.org/multipage/#scriptingLanguages, https://html.spec.whatwg.org/multipage/#dependencies:willful-violation, https://datatracker.ietf.org/doc/draft-ietf-dispatch-javascript-mjs/" },
   { "extensions": ["json"], "mime": "application/json", "description": "JSON format" },
   { "extensions": ["jsonld"], "mime": "application/ld+json", "description": "JSON-LD format" },
-  { "extensions": ["jsx"], "mime": "text/jsx", "description": "JSX format" },
   { "extensions": ["mid", "midi"], "mime": "application/ld+json", "description": "Musical Instrument Digital Interface (MIDI)	audio/midi audio/x-midi" },
   { "extensions": ["mjs"], "mime": "text/javascript", "description": "JavaScript module" },
   { "extensions": ["mp3"], "mime": "audio/mpeg", "description": "MP3 audio" },
@@ -53,7 +52,7 @@ export const mimeTypes = [
   { "extensions": ["swf"], "mime": "application/x-shockwave-flash", "description": "Small web format (SWF) or Adobe Flash document" },
   { "extensions": ["tar"], "mime": "application/x-tar", "description": "Tape Archive (TAR)" },
   { "extensions": ["tif", "tiff"], "mime": "image/tiff", "description": "Tagged Image File Format (TIFF)" },
-  { "extensions": ["ts"], "mime": "video/mp2t", "description": "MPEG transport stream" },
+  // { "extensions": ["ts"], "mime": "video/mp2t", "description": "MPEG transport stream" },
   { "extensions": ["ttf"], "mime": "font/ttf", "description": "TrueType Font" },
   { "extensions": ["txt"], "mime": "text/plain", "description": "Text, (generally ASCII or ISO 8859-n)" },
   { "extensions": ["vsd"], "mime": "application/vnd.visio", "description": "Microsoft Visio" },
@@ -72,6 +71,11 @@ export const mimeTypes = [
   { "extensions": ["3gp"], "mime": "video/3gpp", "description": "3GPP audio/video container" },
   { "extensions": ["3g2"], "mime": "video/3gpp2", "description": "3GPP2 audio/video container; audio/3gpp if it doesn't contain video; audio/3gpp2 if it doesn't contain video" },
   { "extensions": ["7z"], "mime": "application/x-7z-compressed", "description": "7-zip archive" },
+
+  { "extensions": ["jsx"], "mime": "text/jsx", "description": "JavaScript Syntax Extension / JavaScript XML format" },
+  { "extensions": ["ts"], "mime": "text/ts", "description": "TypeScript format" },
+  { "extensions": ["tsx"], "mime": "text/tsx", "description": "TypeScript Syntax Extension / TypeScript XML format" },
+
 ]
 
 export const mimeTypesDescriptions = mimeTypes.reduce((index, t) => {
