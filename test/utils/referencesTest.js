@@ -2,7 +2,6 @@ import { default as expect } from "expect.js";
 import { newReference } from "../../src/utils/references.js";
 
 describe("newReference", () => {
-  console.log('???')
 
   it(`should return the same value for multiple calls`, async () => {
      let obj, counter = 0;
