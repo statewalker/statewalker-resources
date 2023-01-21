@@ -26,7 +26,7 @@ export default class RepositoryInMemFilesAdapter extends RepositoryFilesAdapter 
   async writeFile(pathname, content) {
     const blocks = [];
     for await (let block of content) {
-      blocks.push(block);
+      blocks.push(block.buffer ? block.buffer : block);
     }
     this.files[pathname] = blocks;
   }
