@@ -4,39 +4,43 @@ import Resource from "./Resource.js";
 import Adaptable from "./Adaptable.js";
 
 export default class ResourceRepository extends Adaptable {
-
-  constructor(options = { }) {
+  constructor(options = {}) {
     super(options);
     this._index = new Map();
-    this._adapters = new Adapters('/');
+    this._adapters = new Adapters("/");
   }
 
-  get adapters() { return this._adapters; }
+  get adapters() {
+    return this._adapters;
+  }
 
   async hasResource(url) {
     return this._index.has(url);
   }
 
-  async* getResourceUrls() {
+  async *getResourceUrls() {
     yield* this._index.keys();
   }
 
-  async* getResources() {
+  async *getResources() {
     yield* this._index.values();
   }
 
   async getResource(url, create) {
     let resource = this._index.get(url);
     if (!resource && create) {
-      const mimeType = this._getResourceMimeType(url);
-      resource = new Resource({ repository: this, url, mimeType });
+      resource = this._newResource(url);
       this._index.set(url, resource);
     }
     return resource;
   }
 
+  _newResource(url) {
+    const mimeType = this._getResourceMimeType(url);
+    return new Resource({ repository: this, url, mimeType });
+  }
+
   _getResourceMimeType(url) {
     return getMimeType(url);
   }
-
 }
