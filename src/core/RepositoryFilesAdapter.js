@@ -32,6 +32,8 @@ export default class RepositoryFilesAdapter extends RepositoryAdapter {
     yield* this.options.readFile(pathname);
   }
 
+  async *getFilesInfos(pathname, recusive) { }
+  
   async writeFile(pathname, content) {
     await this.options.writeFile(pathname, content);
   }
