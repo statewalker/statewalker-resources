@@ -1,36 +1,26 @@
-import { parseUri } from "@statewalker/uris";
 import ResourceAdapter from "./ResourceAdapter.js";
-import RepositoryFilesAdapter from "./RepositoryFilesAdapter.js";
 
 export default class ContentWriteAdapter extends ResourceAdapter {
 
   async writeContent(content) {
-    const url = this.resource.url;
-    const u = parseUri(url);
-    if (!u.schema || u.schema === 'file') {
-      await this._writeFile(u.path, content);
-    } else {
-      throw new Error(`Only the 'file' schema is supported`);
-    }
+    const path = this.resource.path;
+    const filesApi = this.repository.filesApi;
+    await filesApi.write(path, content);
   }
 
-  async writeTextContent(content) {
+  async writeText(content) {
     if (typeof content === 'string') {
-      const str = content;
-      content = async function* () { yield str; }()
+      content = [content]
     }
     const encoder = new TextEncoder();
     const it = (async function* () {
-      for await (const str of content) {
-        yield encoder.encode(str);
+      for await (const chunk of content) {
+        yield typeof chunk === 'string'
+          ? encoder.encode(chunk)
+          : chunk;
       }
     })();
     await this.writeContent(it);
-  }
-
-  async _writeFile(pathname, content /* async* content() */) {
-    const filesAdapter = await this.repository.requireAdapter(RepositoryFilesAdapter);
-    await filesAdapter.writeFile(pathname, content);
   }
 
 }

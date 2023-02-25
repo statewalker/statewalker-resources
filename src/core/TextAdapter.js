@@ -32,7 +32,7 @@ export default class TextAdapter extends ResourceAdapter {
    */
   async setText(text) {
     const writer = await this.requireAdapter(ContentWriteAdapter);
-    await writer.writeTextContent(text);
+    await writer.writeText(text);
     this.textRef.reset();
   }
 

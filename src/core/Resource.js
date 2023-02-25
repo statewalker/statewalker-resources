@@ -1,4 +1,5 @@
 // import { getLogger } from "@dynotes/logger";
+import { parseUri } from "@statewalker/uris";
 import Adaptable from "./Adaptable.js";
 
 export default class Resource extends Adaptable {
@@ -15,5 +16,12 @@ export default class Resource extends Adaptable {
   get mimeType() { return this.options.mimeType; }
   get resourceType() { return this.mimeType; }
   get url() { return this.options.url; }
+  get urlObj() { 
+    if (!this._urlObj) {
+      this._urlObj = parseUri(this.url);
+    }
+    return this._urlObj;
+  }
+  get path() { return this.urlObj.path; }
 
 }
