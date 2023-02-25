@@ -67,11 +67,9 @@ export default class ResourceRepository extends Adaptable {
   }
 
   _resolvePath(path) {
-    const filePath = parseUri(path).path;
-    const segments = filePath.split("/").filter((s) => !!s && s !== ".");
-    if (segments.length === 0) segments.push("");
-    segments.unshift("");
-    return segments.join("/");
+    let filePath = parseUri(path).path;
+    filePath = this.filesApi.normalizePath(filePath);
+    return filePath;
   }
 
   _newResource(url) {
