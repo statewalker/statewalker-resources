@@ -17,7 +17,7 @@ export default class TextAdapter extends ResourceAdapter {
    */
   get textRef() {
     return this._textRef = this._textRef || newReference(async () => {
-      const reader = await this.requireAdapter(ContentReadAdapter);
+      const reader = this.requireAdapter(ContentReadAdapter);
       let text = "";
       for await (const chunk of reader.readText()) {
         text += chunk;
@@ -31,7 +31,7 @@ export default class TextAdapter extends ResourceAdapter {
    * @param {string} text a new text content to save
    */
   async setText(text) {
-    const writer = await this.requireAdapter(ContentWriteAdapter);
+    const writer = this.requireAdapter(ContentWriteAdapter);
     await writer.writeText(text);
     this.textRef.reset();
   }
