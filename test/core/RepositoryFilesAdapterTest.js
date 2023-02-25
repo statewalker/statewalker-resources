@@ -9,11 +9,11 @@ import writeEntries from "./writeEntries.js";
 
 describe("RepositoryFilesAdapter", () => {
   async function newRepository(files) {
-    const rootDir = new URL("./data-workspaces", import.meta.url).pathname;
-    const filesApi = new NodeFilesApi({ fs, rootDir });
-    // await filesApi.remove("/");
+    // const rootDir = new URL("./data-workspaces", import.meta.url).pathname;
+    // const filesApi = new NodeFilesApi({ fs, rootDir });
+    const filesApi = new MemFilesApi();
+    await filesApi.remove("/");
     await writeEntries(filesApi, files);
-    // const filesApi = new MemFilesApi({ files });
     const repository = new Repository({ filesApi });
     repository.register("", ContentReadAdapter);
     repository.register("", ContentWriteAdapter);
