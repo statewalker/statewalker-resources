@@ -4,8 +4,6 @@ export { default as ContentReadAdapter } from "./ContentReadAdapter.js";
 export { default as ContentWriteAdapter } from "./ContentWriteAdapter.js";
 export { default as OutputAdapter } from "./OutputAdapter.js";
 export { default as RepositoryAdapter } from "./RepositoryAdapter.js";
-export { default as RepositoryFilesAdapter } from "./RepositoryFilesAdapter.js";
-export { default as RepositoryInMemFilesAdapter } from "./RepositoryInMemFilesAdapter.js";
 export { default as Repository } from "./Repository.js";
 export { default as ResourceAdapter } from "./ResourceAdapter.js";
 export { default as Resource } from "./Resource.js";
