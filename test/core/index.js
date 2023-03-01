@@ -1,6 +1,6 @@
 /* */
-import "./ResourceAdapterTest.js"
+import "./ResourceAdapterTest.js";
 import "./RepositoryFilesAdapterTest.js";
-import "./ContentReadAdapterTest.js"
-// import "./RepositoryFilesApiAdapterTest.js";
+import "./ContentReadAdapterTest.js";
+import "./JsonAdapterTest.js";
 // */
