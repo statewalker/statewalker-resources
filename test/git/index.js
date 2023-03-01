@@ -1,0 +1,3 @@
+/* */
+import "./GitAdapterTest.js";
+// */

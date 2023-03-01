@@ -17,17 +17,17 @@ export default class Workspace extends RepositoryAdapter {
       let project = await this.getProject(resource.path, false);
       if (project) list.push(project);
     }
-    return list
+    return list;
   }
 
   getProjectFilePath(name) {
-    return this.repository.filesApi.normalizePath(name) + '/' + this.projectFileName;
+    return this.repository.filesApi.normalizePath(name) + "/" +
+      this.projectFileName;
   }
 
-  async getProject(path, create=false) {
+  async getProject(path, create = false) {
     path = this.getProjectFilePath(path);
     const projectManifest = await this.repository.getResource(path, create);
     return projectManifest ? projectManifest.requireAdapter(Project) : null;
   }
-
 }
