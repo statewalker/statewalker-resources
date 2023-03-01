@@ -36,9 +36,9 @@ export default class ResourceRepository extends Adaptable {
     return this._adapters;
   }
 
-  async *getResources(prefix) {
+  async *getResources(prefix, recursive) {
     const basePath = this._resolvePath(prefix);
-    for await (let { path } of this.filesApi.list(basePath)) {
+    for await (let { path } of this.filesApi.list(basePath, { recursive })) {
       yield await this.getResource(path);
     }
   }

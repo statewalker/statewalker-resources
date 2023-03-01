@@ -24,4 +24,7 @@ export default class Resource extends Adaptable {
   }
   get path() { return this.urlObj.path; }
 
+  async getStats() { return this.repository.filesApi.getStats(this.path); }
+  async exists() { return !!(await this.getStats()); }
+
 }
