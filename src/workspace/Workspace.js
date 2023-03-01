@@ -6,27 +6,25 @@ export default class Workspace extends RepositoryAdapter {
    * Name of the file used as a marker that a folder used as a project managed by this workspace.
    */
   get projectFileName() {
-    return ".project.json";
+    return "index.md";
   }
 
-  async *getProjects() {
+  async getProjects() {
+    const list = [];
     for await (
       let resource of this.repository.getResources("/", false)
     ) {
-      let project = await this._getProject(resource.path, false);
-      if (project) yield project;
+      let project = await this.getProject(resource.path, false);
+      if (project) list.push(project);
     }
-  }
-
-  async getProject(name) {
-    return this._getProject(name, false);
+    return list
   }
 
   getProjectFilePath(name) {
     return this.repository.filesApi.normalizePath(name) + '/' + this.projectFileName;
   }
 
-  async _getProject(path, create) {
+  async getProject(path, create=false) {
     path = this.getProjectFilePath(path);
     const projectManifest = await this.repository.getResource(path, create);
     return projectManifest ? projectManifest.requireAdapter(Project) : null;
