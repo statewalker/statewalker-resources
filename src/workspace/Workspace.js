@@ -2,12 +2,6 @@ import RepositoryAdapter from "../core/RepositoryAdapter.js";
 import Project from "./Project.js";
 
 export default class Workspace extends RepositoryAdapter {
-  /**
-   * Name of the file used as a marker that a folder used as a project managed by this workspace.
-   */
-  get projectFileName() {
-    return "index.md";
-  }
 
   async getProjects() {
     const list = [];
@@ -20,14 +14,15 @@ export default class Workspace extends RepositoryAdapter {
     return list
   }
 
-  getProjectFilePath(name) {
-    return this.repository.filesApi.normalizePath(name) + '/' + this.projectFileName;
+  getProjectDirectory(name) {
+    return this.repository.filesApi.normalizePath(name);
   }
 
   async getProject(path, create=false) {
-    path = this.getProjectFilePath(path);
-    const projectManifest = await this.repository.getResource(path, create);
-    return projectManifest ? projectManifest.requireAdapter(Project) : null;
+    const projectDirName = this.getProjectDirectory(path)
+    const projectDir = await this.repository.getResource(projectDirName, create);
+    if (!projectDir) return null;
+    return projectDir.requireAdapter(Project);
   }
 
 }
