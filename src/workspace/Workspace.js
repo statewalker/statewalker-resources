@@ -11,7 +11,7 @@ export default class Workspace extends RepositoryAdapter {
       let project = await this.getProject(resource.path, false);
       if (project) list.push(project);
     }
-    return list
+    return list;
   }
 
   getProjectDirectory(name) {
@@ -24,5 +24,4 @@ export default class Workspace extends RepositoryAdapter {
     if (!projectDir) return null;
     return projectDir.requireAdapter(Project);
   }
-
 }
