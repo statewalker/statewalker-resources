@@ -28,20 +28,16 @@
     "@statewalker/adapters": "^0.1.0",
     "@statewalker/uris": "^0.2.5",
     "@statewalker/cache-mem": "0.1.2",
-    "@swc/wasm-web": "^1.3.22",
     "es-module-lexer": "^1.1.0",
-    "esbuild-wasm": "^0.16.6",
-    "isomorphic-git": "^1.21.0",
     "magic-string": "^0.27.0",
-    "@statewalker/webrun-git": "0.0.0",
-    "@statewalker/webrun-files": "0.0.0"
+    "@statewalker/webrun-files": "^0.3.0"
   },
   "devDependencies": {
     "@statewalker/rollup": "^0.1.6",
     "eslint": "^8",
     "expect.js": "^0.3",
     "mocha": "^10",
-    "rollup": "^3"
+    "rollup": "^2"
   },
   "repository": {
     "type": "git",
