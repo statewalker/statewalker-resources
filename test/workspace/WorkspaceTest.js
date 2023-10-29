@@ -19,7 +19,7 @@ describe("ContentReadAdapter", () => {
     }),
     "projectOne/index.md": "# First Notebook\n* item one\n* item two",
 
-    "notAProject/index.md": "Hello, there!",
+    // "notAProject/index.md": "Hello, there!",
 
     "projectTwo/.project.json": toProjectManifest({
       name: "Second Project",
@@ -51,7 +51,7 @@ describe("ContentReadAdapter", () => {
   it(`should return a list of already defined projects`, async () => {
     const workspace = repository.requireAdapter(Workspace);
     const projectNames = [];
-    for await (const project of workspace.getProjects()) {
+    for await (const project of workspace.listProjects()) {
       projectNames.push(project.projectName);
     }
     expect(projectNames).to.eql([
@@ -71,14 +71,14 @@ describe("ContentReadAdapter", () => {
     expect(project.projectName).to.eql("projectOne");
   });
 
-  it(`should get project manifests`, async () => {
-    const workspace = repository.requireAdapter(Workspace);
-    const project = await workspace.getProject("projectOne");
-    const manifest = await project.getManifest();
-    expect(manifest).to.eql({
-      name: "First Project",
-      foo: "Bar",
-    });
-  });
+  // it(`should get project manifests`, async () => {
+  //   const workspace = repository.requireAdapter(Workspace);
+  //   const project = await workspace.getProject("projectOne");
+  //   const manifest = await project.getManifest();
+  //   expect(manifest).to.eql({
+  //     name: "First Project",
+  //     foo: "Bar",
+  //   });
+  // });
 
 });

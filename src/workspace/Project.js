@@ -1,9 +1,10 @@
 import ResourceAdapter from "../core/ResourceAdapter.js";
 import Workspace from "./Workspace.js";
-import { resolveUrl,concatPath } from "@statewalker/uris";
+import { concatPath } from "@statewalker/uris";
 import Notebook from "./Notebook.js";
 
 export default class Project extends ResourceAdapter {
+
 /*
   async getManifest() {
     const jsonAdapter = this.requireAdapter(JsonAdapter);
@@ -11,7 +12,6 @@ export default class Project extends ResourceAdapter {
   }
 */
 
-  
   get projectName() {
     const pathSegments = this.path.split("/").filter((s) => !!s);
     return pathSegments[0];
@@ -23,7 +23,7 @@ export default class Project extends ResourceAdapter {
 
   async getNotebook(path, create) {
     const resource = await this.getProjectResource(path, create);
-    return resource?.requireAdapter(Notebook);
+    return resource ? resource.requireAdapter(Notebook) : null;
   }
 
   async getRootNotebook() {

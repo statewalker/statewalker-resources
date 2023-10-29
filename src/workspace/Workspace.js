@@ -4,14 +4,20 @@ import Project from "./Project.js";
 export default class Workspace extends RepositoryAdapter {
 
   async getProjects() {
-    const list = [];
+    const result = [];
+    for await (let project of this.listProjects()) {
+      result.push(project);
+    }
+    return result;
+  }
+
+  async* listProjects() {
     for await (
       let resource of this.repository.getResources("/", false)
     ) {
       let project = await this.getProject(resource.path, false);
-      if (project) list.push(project);
+      if (project) yield project;
     }
-    return list;
   }
 
   getProjectDirectory(name) {
