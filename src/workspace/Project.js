@@ -21,9 +21,13 @@ export default class Project extends ResourceAdapter {
     return this.repository.getAdapter(Workspace);
   }
 
+  async getNotebook(path, create) {
+    const resource = await this.getProjectResource(path, create);
+    return resource?.requireAdapter(Notebook);
+  }
+
   async getRootNotebook() {
-    const notebookRessource = await this.getProjectResource('./index.md',true);
-    return notebookRessource.requireAdapter(Notebook)
+    return await this.getNotebook("./index.md", true);
   }
 
   resolveProjectPath(path){
