@@ -1,3 +1,3 @@
 /* */
-import "./JavaScriptAstAdapterTest.js"
+import "./JavaScriptAstAdapterTest.ts"
 // */

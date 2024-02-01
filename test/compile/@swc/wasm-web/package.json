@@ -13,10 +13,10 @@
   },
   "files": [
     "wasm-web_bg.wasm",
-    "wasm-web.js",
+    "wasm-web.ts",
     "wasm-web.d.ts"
   ],
-  "module": "wasm-web.js",
+  "module": "wasm-web.ts",
   "types": "wasm-web.d.ts",
   "sideEffects": false
 }

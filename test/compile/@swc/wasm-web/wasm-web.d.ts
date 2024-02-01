@@ -467,27 +467,27 @@ export interface Options extends Config {
    *
    * "root" - Passes the "root" value through as unchanged.
    * "upward" - Walks upward from the "root" directory, looking for a directory
-   * containing a swc.config.js file, and throws an error if a swc.config.js
+   * containing a swc.config.ts file, and throws an error if a swc.config.ts
    * is not found.
    * "upward-optional" - Walk upward from the "root" directory, looking for
-   * a directory containing a swc.config.js file, and falls back to "root"
-   *  if a swc.config.js is not found.
+   * a directory containing a swc.config.ts file, and falls back to "root"
+   *  if a swc.config.ts is not found.
    *
    *
    * "root" is the default mode because it avoids the risk that Swc
-   * will accidentally load a swc.config.js that is entirely outside
+   * will accidentally load a swc.config.ts that is entirely outside
    * of the current project folder. If you use "upward-optional",
    * be aware that it will walk up the directory structure all the
    * way to the filesystem root, and it is always possible that someone
-   * will have a forgotten swc.config.js in their home directory,
+   * will have a forgotten swc.config.ts in their home directory,
    * which could cause unexpected errors in your builds.
    *
    *
    * Users with monorepo project structures that run builds/tests on a
    * per-package basis may well want to use "upward" since monorepos
-   * often have a swc.config.js in the project root. Running Swc
+   * often have a swc.config.ts in the project root. Running Swc
    * in a monorepo subdirectory without "upward", will cause Swc
-   * to skip loading any swc.config.js files in the project root,
+   * to skip loading any swc.config.ts files in the project root,
    * which can lead to unexpected errors and compilation failure.
    */
   rootMode?: "root" | "upward" | "upward-optional";
@@ -1050,7 +1050,7 @@ export interface BaseModuleConfig {
    * - `node`
    *
    * When importing CommonJS files (either directly written in CommonJS, or generated with a compiler)
-   * Node.js always binds the `default` export to the value of `module.exports`.
+   * Node.ts always binds the `default` export to the value of `module.exports`.
    *
    * ```javascript
    * import foo from "foo";
@@ -1068,9 +1068,9 @@ export interface BaseModuleConfig {
    * _foo;
    * _bar.bar;
    * ```
-   * This is not exactly the same as what Node.js does since swc allows accessing any property of `module.exports`
-   * as a named export, while Node.js only allows importing statically analyzable properties of `module.exports`.
-   * However, any import working in Node.js will also work when compiled with swc using `importInterop: "node"`.
+   * This is not exactly the same as what Node.ts does since swc allows accessing any property of `module.exports`
+   * as a named export, while Node.ts only allows importing statically analyzable properties of `module.exports`.
+   * However, any import working in Node.ts will also work when compiled with swc using `importInterop: "node"`.
    *
    * - `none`
    *
@@ -1877,7 +1877,7 @@ export type ImportSpecifier =
   | ImportNamespaceSpecifier;
 
 /**
- * e.g. `import foo from 'mod.js'`
+ * e.g. `import foo from 'mod.ts'`
  */
 export interface ImportDefaultSpecifier extends Node, HasSpan {
   type: "ImportDefaultSpecifier";
@@ -1885,7 +1885,7 @@ export interface ImportDefaultSpecifier extends Node, HasSpan {
 }
 
 /**
- * e.g. `import * as foo from 'mod.js'`.
+ * e.g. `import * as foo from 'mod.ts'`.
  */
 export interface ImportNamespaceSpecifier extends Node, HasSpan {
   type: "ImportNamespaceSpecifier";
@@ -1894,11 +1894,11 @@ export interface ImportNamespaceSpecifier extends Node, HasSpan {
 }
 
 /**
- * e.g. - `import { foo } from 'mod.js'`
+ * e.g. - `import { foo } from 'mod.ts'`
  *
  * local = foo, imported = None
  *
- * e.g. `import { foo as bar } from 'mod.js'`
+ * e.g. `import { foo as bar } from 'mod.ts'`
  *
  * local = bar, imported = Some(foo) for
  */

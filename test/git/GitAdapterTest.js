@@ -1,6 +1,6 @@
-import { default as expect } from "expect.js";
+import { default as expect } from "expect.ts";
 import git from "isomorphic-git";
-import http from "isomorphic-git/http/web/index.js";
+import http from "isomorphic-git/http/web/index.ts";
 
 class Stat {
   constructor(stats) {

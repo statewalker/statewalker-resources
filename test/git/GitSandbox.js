@@ -1,7 +1,7 @@
 // import * as git from 'git-essentials'
 import fetch from "node-fetch";
-import git from "isomorphic-git/index.js";
-import http from "isomorphic-git/http/node/index.js";
+import git from "isomorphic-git/index.ts";
+import http from "isomorphic-git/http/node/index.ts";
 
 const authConfig = {
   username: "test-bot",

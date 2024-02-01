@@ -1,4 +1,4 @@
-// Copied from https://github.com/guybedford/es-module-shims/blob/main/src/resolve.js:
+// Copied from https://github.com/guybedford/es-module-shims/blob/main/src/resolve.ts:
 
 export let importMap = { imports: Object.create(null), scopes: Object.create(null) };
 

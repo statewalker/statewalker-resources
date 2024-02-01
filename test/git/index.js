@@ -1,3 +1,3 @@
 /* */
-import "./GitAdapterTest.js";
+import "./GitAdapterTest.ts";
 // */

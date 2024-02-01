@@ -8,46 +8,53 @@
     "name": "Mikhail Kotelnikov",
     "email": "mikhail.kotelnikov@gmail.com"
   },
-  "license": "MIT",
   "type": "module",
+  "module": "./dist/index.js",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts"
+    }
+  },
   "files": [
-    "dist/**/package.json",
-    "dist/**/*.js",
-    "src/**/*.js",
-    "index.js"
+    "dist",
+    "src"
   ],
-  "module": "src/index.js",
-  "main": "src/index.js",
+  "license": "MIT",
   "jsdelivr": "dist/index.js",
   "unpkg": "dist/index.js",
-  "exports": {
-    "umd": "./dist/index-umd.min.js",
-    "default": "./src/index.js"
-  },
   "dependencies": {
     "@statewalker/adapters": "^0.1.0",
-    "@statewalker/uris": "^0.2.5",
     "@statewalker/cache-mem": "0.1.2",
+    "@statewalker/uris": "^0.2.5",
+    "@statewalker/models": "*",
+    "@statewalker/webrun-files": "^0.3.0",
     "es-module-lexer": "^1.1.0",
-    "magic-string": "^0.27.0",
-    "@statewalker/webrun-files": "^0.3.0"
+    "magic-string": "^0.30.5"
   },
   "devDependencies": {
-    "@statewalker/rollup": "^0.1.6",
-    "eslint": "^8",
+    "@statewalker/eslint-config": "*",
+    "@statewalker/typescript-config": "*",
+    "@types/node": "^20.11.10",
+    "eslint": "^8.56.0",
     "expect.js": "^0.3",
     "mocha": "^10",
-    "rollup": "^2"
+    "typescript": "^5.3.3",
+    "vitest": "^1.2.2",
+    "tsup": "^8.0.1"
   },
   "repository": {
     "type": "git",
     "url": "git@github.com:statewalker/statewalker-resources.git"
   },
   "scripts": {
-    "eslint": "eslint src",
-    "rollup": "rollup -c",
-    "test": "mocha -R spec ./test/index.js && yarn eslint",
-    "prepublishOnly": "rm -rf dist && yarn test && yarn rollup"
+    "build": "tsup",
+    "watch": "tsup --watch",
+    "clean": "rm -rf dist",
+    "lint": "eslint \"**/*.ts\"",
+    "test": "vitest",
+    "prepublishOnly": "rm -rf dist && yarn test && yarn build"
   },
   "sideEffects": false,
   "publishConfig": {

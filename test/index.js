@@ -1,7 +1,7 @@
 /* */
-import "./utils/index.js";
-import "./core/index.js";
-import "./workspace/index.js";
+import "./utils/index.ts";
+import "./core/index.ts";
+import "./workspace/index.ts";
 
-// import "./compile/index.js";
+// import "./compile/index.ts";
 // */

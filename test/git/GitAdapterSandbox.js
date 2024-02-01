@@ -1,5 +1,5 @@
-import git from "isomorphic-git/index.js";
-import http from "isomorphic-git/http/node/index.js";
+import git from "isomorphic-git/index.ts";
+import http from "isomorphic-git/http/node/index.ts";
 import IsomorphicGitFs from "@statewalker/webrun-git";
 
 Promise.resolve().then(main).catch(console.error);
