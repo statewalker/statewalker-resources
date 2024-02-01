@@ -35,12 +35,8 @@ export abstract class Adaptable implements TAdaptable {
     if (this._adaptersInstances.has(adapterType)) {
       adapter = this._adaptersInstances.get(adapterType) as T;
     } else {
-      const adapterFactory = this.adapters.getAdapterFactory(
-        this.adapterType,
-        adapterType
-      );
-      if (adapterFactory) {
-        adapter = adapterFactory(this);
+      adapter = this._newAdapter(adapterType);
+      if (adapter) {
         this._adaptersInstances.set(adapterType, adapter);
       }
     }
@@ -57,6 +53,14 @@ export abstract class Adaptable implements TAdaptable {
       );
     }
     return adapter;
+  }
+
+  _newAdapter<T>(adapterType: TAdapterType<T>): T | undefined {
+    const adapterFactory = this.adapters.getAdapterFactory(
+      this.adapterType,
+      adapterType
+    );
+    return adapterFactory ? adapterFactory(this) : undefined;
   }
 }
 
