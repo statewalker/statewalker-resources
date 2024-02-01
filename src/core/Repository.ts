@@ -1,8 +1,7 @@
 import { parseUri } from "@statewalker/uris";
 import { TCache, TCacheOptions, bindLruMethods } from "@statewalker/cache-mem";
-import { FilesApi } from "@statewalker/webrun-files";
+import { FilesApi, getMimeType } from "@statewalker/webrun-files";
 
-import getMimeType from "../../tmp/getMimeType.ts";
 import { Resource } from "./Resource.ts";
 import {
   Adaptable,

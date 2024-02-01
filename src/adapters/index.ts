@@ -48,8 +48,9 @@ export abstract class Adaptable implements TAdaptable {
     if (adapter === undefined || adapter === null) {
       const typePath = this.adapters.getAdapterTypeKey(adapterType);
       throw new Error(
-        `No required adapters found for this type of resources. ` +
-          `Adapter type: "${typePath}`
+        `No required adapters found for this type of resources. \n` +
+          `Adapter type: "${typePath} \n` +
+          `Host type: "${this.adapterType}"`
       );
     }
     return adapter;
