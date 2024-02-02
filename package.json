@@ -27,8 +27,8 @@
   "dependencies": {
     "@statewalker/adapters": "^0.1.0",
     "@statewalker/cache-mem": "0.1.2",
-    "@statewalker/uris": "^0.2.5",
     "@statewalker/models": "*",
+    "@statewalker/uris": "^0.2.5",
     "@statewalker/webrun-files": "^0.3.0",
     "es-module-lexer": "^1.1.0",
     "magic-string": "^0.30.5"
@@ -40,9 +40,9 @@
     "eslint": "^8.56.0",
     "expect.js": "^0.3",
     "mocha": "^10",
+    "tsup": "^8.0.1",
     "typescript": "^5.3.3",
-    "vitest": "^1.2.2",
-    "tsup": "^8.0.1"
+    "vitest": "^1.2.2"
   },
   "repository": {
     "type": "git",
