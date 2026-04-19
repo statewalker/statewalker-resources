@@ -1,1 +1,0 @@
-# @statewalker/resources

@@ -1,3 +1,0 @@
-/* */
-import "./JavaScriptAstAdapterTest.js"
-// */

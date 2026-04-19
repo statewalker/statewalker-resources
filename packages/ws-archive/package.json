@@ -1,0 +1,37 @@
+{
+  "name": "@statewalker/ws-archive",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "description": "Archive of workspace utilities: data analysis, DSV/CSV processing, async generators, and workspace models",
+  "homepage": "https://github.com/statewalker/statewalker-resources",
+  "author": {
+    "name": "Mikhail Kotelnikov",
+    "email": "mikhail.kotelnikov@gmail.com"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/statewalker/statewalker-resources.git"
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "lint": "biome lint src"
+  },
+  "dependencies": {
+    "@preact/signals-core": "^1.8.0",
+    "@statewalker/webrun-files": "catalog:",
+    "arquero": "^5.4.1",
+    "d3": "^7.9.0",
+    "rbush": "^4.0.1",
+    "@uwdata/flechette": "^1.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
