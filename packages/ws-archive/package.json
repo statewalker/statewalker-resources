@@ -22,12 +22,12 @@
     "lint": "biome lint src"
   },
   "dependencies": {
-    "@preact/signals-core": "^1.8.0",
+    "@preact/signals-core": "catalog:",
     "@statewalker/webrun-files": "catalog:",
-    "arquero": "^5.4.1",
-    "d3": "^7.9.0",
-    "rbush": "^4.0.1",
-    "@uwdata/flechette": "^1.1.1"
+    "arquero": "catalog:",
+    "d3": "catalog:",
+    "rbush": "catalog:",
+    "@uwdata/flechette": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",

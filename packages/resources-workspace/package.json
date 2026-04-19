@@ -34,7 +34,7 @@
   },
   "dependencies": {
     "@statewalker/resources-core": "workspace:*",
-    "@statewalker/uris": "^0.2.5",
+    "@statewalker/uris": "catalog:",
     "@statewalker/webrun-files": "catalog:"
   },
   "devDependencies": {

@@ -34,9 +34,9 @@
   },
   "dependencies": {
     "@statewalker/resources-utils": "workspace:*",
-    "@statewalker/adapters": "^0.1.0",
-    "@statewalker/uris": "^0.2.5",
-    "@statewalker/cache-mem": "0.1.2",
+    "@statewalker/adapters": "catalog:",
+    "@statewalker/uris": "catalog:",
+    "@statewalker/cache-mem": "catalog:",
     "@statewalker/webrun-files": "catalog:"
   },
   "devDependencies": {
