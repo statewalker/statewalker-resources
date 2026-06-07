@@ -10,10 +10,9 @@
     "forceConsistentCasingInFileNames": true,
     "declaration": true,
     "declarationMap": true,
+    "ignoreDeprecations": "6.0",
     "baseUrl": ".",
     "paths": {
-      "@statewalker/resources-utils": ["packages/resources-utils/src"],
-      "@statewalker/resources-core": ["packages/resources-core/src"],
       "@statewalker/resources-workspace": ["packages/resources-workspace/src"]
     }
   }

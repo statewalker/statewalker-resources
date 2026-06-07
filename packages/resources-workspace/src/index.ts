@@ -1,3 +1,3 @@
-export { Notebook } from "./notebook.js";
-export { Project } from "./project.js";
-export { Workspace } from "./workspace.js";
+export * from "./core/index.js";
+export * from "./utils/index.js";
+export * from "./workspace/index.js";

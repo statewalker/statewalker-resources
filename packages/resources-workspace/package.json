@@ -2,7 +2,7 @@
   "name": "@statewalker/resources-workspace",
   "version": "0.1.0",
   "type": "module",
-  "description": "Workspace, Project, and Notebook abstractions for statewalker resources",
+  "description": "Resource model, adapters, utilities, and Workspace/Project/Notebook abstractions for statewalker resources",
   "homepage": "https://github.com/statewalker/statewalker-resources",
   "author": {
     "name": "Mikhail Kotelnikov",
@@ -28,13 +28,14 @@
     "src"
   ],
   "scripts": {
-    "build": "rimraf dist && rolldown -c && tsc --emitDeclarationOnly --declaration",
-    "test": "vitest run",
-    "lint": "biome lint src"
+    "build": "rimraf dist && rolldown -c && tsc --emitDeclarationOnly --declaration -p tsconfig.build.json",
+    "test": "vitest run --passWithNoTests",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check --write src",
+    "format": "biome format --write src"
   },
   "dependencies": {
-    "@statewalker/resources-core": "workspace:*",
-    "@statewalker/uris": "catalog:",
     "@statewalker/webrun-files": "catalog:"
   },
   "devDependencies": {

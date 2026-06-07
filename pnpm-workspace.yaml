@@ -2,10 +2,20 @@ packages:
   - "packages/*"
 
 catalog:
+  "@ai-sdk/google": ^3.0.64
+  "@ai-sdk/openai": ^3.0.53
   "@biomejs/biome": ^2.4.12
   "@preact/signals-core": ^1.14.1
   "@statewalker/adapters": ^0.1.0
   "@statewalker/cache-mem": 0.1.2
+  "@statewalker/content-extractors": ^0.1.0
+  "@statewalker/fsm": ^0.37.0
+  "@statewalker/indexer-api": ^0.1.0
+  "@statewalker/indexer-fulltext": ^0.1.0
+  "@statewalker/indexer-mem-flexsearch": ^0.1.0
+  "@statewalker/indexer-vector": ^0.1.0
+  "@statewalker/shared-baseclass": ^0.1.0
+  "@statewalker/shared-dataflow": ^0.1.0
   "@statewalker/uris": ^0.2.6
   "@statewalker/webrun-files": ^0.7.0
   "@statewalker/webrun-files-mem": ^0.7.2
@@ -13,6 +23,7 @@ catalog:
   "@types/node": ^25.6.0
   "@uwdata/flechette": ^2.4.0
   "@vitest/coverage-v8": ^4.1.4
+  ai: ^6.0.168
   arquero: ^8.0.3
   d3: ^7.9.0
   pnpm: ^10.33.0
@@ -23,3 +34,5 @@ catalog:
   turbo: ^2.9.6
   typescript: ^6.0.3
   vitest: ^4.1.4
+  yaml: ^2.8.3
+  zod: ^4.3.6
