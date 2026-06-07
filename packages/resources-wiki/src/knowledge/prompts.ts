@@ -47,3 +47,91 @@ corpus purpose (steers level of detail per section): ${CORPUS_PURPOSE_PLACEHOLDE
 
 On-corpus details get more space; off-corpus or tangential details get a
 one-line mention.`;
+
+/** Topic + outlier class extraction prompt (lifted from wiki-runtime). */
+export const META_EXTRACTOR_SYSTEM_PROMPT = `You are the topic + outlier
+classifier for an LLM-curated wiki. Read a document's L2 summary and decide
+which generic TOPIC CLASSES and which generic OUTLIER CLASSES it covers, plus
+per-source briefs that will be lifted verbatim into the global class pages.
+
+RULES — these are load-bearing:
+
+CLASS NAMING
+
+1. Generic class names ONLY. Prefer "Company founders" over "Acme founders".
+   The specific identity lives in the document body and the per-section graph —
+   NEVER as the class name itself.
+2. Prefer reusing existing classes. Before coining a new class, scan the
+   provided existing-classes list for a match and use it verbatim (same 'key',
+   same 'name'). Don't coin near-duplicates.
+3. The class 'key' is kebab-case ASCII alphanumeric plus '-', derived from the
+   class name. For existing classes, reuse the existing key exactly.
+4. Maximum ~6 topic classes per source. Most sources cover 2–4.
+
+TWO LAYERS OF TEXT — 'description' AND 'brief' — BOTH ALWAYS REQUIRED
+
+5. 'description' is ABSTRACT, generic, document-INDEPENDENT — it defines what
+   the class MEANS. No proper nouns or numbers from this document.
+6. 'brief' is DOCUMENT-SPECIFIC — 1–4 sentences on what THIS source contributes
+   (angle, headline data points, which sections cover it).
+7. REUSING an existing class — COPY its 'description' verbatim; write a fresh
+   'brief'. A divergent description on a reuse creates a global-index inconsistency.
+8. COINING a new class — write a fresh abstract 'description' future sources can reuse.
+
+SECTION KEYS
+
+9. Every entry MUST list at least one 'sectionKeys' value present in the summary.
+
+OUTLIERS
+
+10. Mark a finding as an outlier ONLY when the source itself flags it as surprising.
+11. Every outlier MUST carry 'whySurprising'. If you cannot articulate a violated
+    expectation, it is NOT an outlier.
+12. Outliers can ALSO be topics — declare in both sections when applicable.
+13. NO fabricated outliers.
+
+corpus purpose (frames what counts as on-corpus): ${CORPUS_PURPOSE_PLACEHOLDER}`;
+
+/** Per-section graph extraction prompt (lifted from wiki-runtime). */
+export const GRAPH_EXTRACTOR_SYSTEM_PROMPT = `You are the structured-signal
+extractor for an LLM-curated wiki. For each section of a document, produce
+'entities', 'statements', and 'relations' that capture the section's headline
+content — NOT a verbatim re-encoding of every fact.
+
+WHAT TO KEEP: the main subject(s); named actors (people, organisations, places,
+periods); named methods / algorithms / datasets / products / concepts; headline
+findings and conclusions; source-flagged outliers; recommendations / thresholds.
+
+WHAT TO DROP: routine measurements, hyperparameters, config knobs; individual
+table rows when the trend is the point; latency/cost figures unless headline;
+statistical-test bookkeeping (p-values, CIs); implementation details unless the
+argument turns on them.
+
+THREE DISTINCT SHAPES:
+
+ENTITIES — things in the world we can refer to by name more than once: a person,
+place, organisation, named period/event, or named work/method/dataset/concept.
+NOT entities: findings/conclusions (those are STATEMENTS); one-off literals
+(dates, numbers — those are the OBJECT of a statement). entity.value is the
+canonical name; reuse it across sections. entity.type is an open lowercase enum.
+
+TRIPLES — both 'relations' and 'statements' are 3-element arrays
+[subject, predicate, object] reading as simplified phrases.
+
+HARD RULE 1 — SUBJECT IS ALWAYS AN ENTITY: the subject of EVERY triple MUST be a
+value declared in this document's 'entities'. The runtime filter mechanically
+drops triples whose subject is missing from entities. Reformulate any triple
+whose natural subject is a claim or literal so its subject is a real entity.
+
+HARD RULE 2 — RELATIONS HAVE TWO ENTITIES: for 'relations', BOTH subject and
+object MUST be entity.value strings. If the object isn't an entity, the fact
+belongs in 'statements'.
+
+STATEMENTS: subject is an entity.value; object is a stringified literal (finding,
+label, date, number). Numbers/dates/booleans are written as strings.
+RELATIONS: entity-to-entity; predicates are short camelCase/snake_case verbs.
+
+VOCABULARY COHERENCE within one document: reuse entity.value, entity.type, and
+predicate strings rather than coining near-duplicates.
+
+corpus purpose (frames what's worth keeping): ${CORPUS_PURPOSE_PLACEHOLDER}`;

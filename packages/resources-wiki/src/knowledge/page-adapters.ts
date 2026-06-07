@@ -3,7 +3,7 @@ import type { FilesApi } from "@statewalker/webrun-files";
 import { ContentAdapter } from "../content/index.js";
 import { tryReadJson, tryReadText, writeJsonAtomic, writeTextAtomic } from "../util/io.js";
 import { pageArtifactPath } from "./page-paths.js";
-import type { DocumentSummary, SectionSummary } from "./types.js";
+import type { DocumentGraph, DocumentMeta, DocumentSummary, SectionSummary } from "./types.js";
 
 function filesApiOf(adapter: ResourceAdapter): FilesApi {
   return (adapter.repository as ResourceRepository).filesApi;
@@ -52,5 +52,35 @@ export class WikiPageSummary extends ResourceAdapter {
 
   async write(summary: DocumentSummary): Promise<void> {
     await writeJsonAtomic(filesApiOf(this), this.artifactPath(), summary);
+  }
+}
+
+/** Reads/writes a source resource's `DocumentMeta` (`meta.json`). */
+export class WikiPageMeta extends ResourceAdapter {
+  private artifactPath(): string {
+    return pageArtifactPath(this.resource, "meta.json");
+  }
+
+  async get(): Promise<DocumentMeta | undefined> {
+    return tryReadJson<DocumentMeta>(filesApiOf(this), this.artifactPath());
+  }
+
+  async write(meta: DocumentMeta): Promise<void> {
+    await writeJsonAtomic(filesApiOf(this), this.artifactPath(), meta);
+  }
+}
+
+/** Reads/writes a source resource's `DocumentGraph` (`graph.json`). */
+export class WikiPageGraph extends ResourceAdapter {
+  private artifactPath(): string {
+    return pageArtifactPath(this.resource, "graph.json");
+  }
+
+  async get(): Promise<DocumentGraph | undefined> {
+    return tryReadJson<DocumentGraph>(filesApiOf(this), this.artifactPath());
+  }
+
+  async write(graph: DocumentGraph): Promise<void> {
+    await writeJsonAtomic(filesApiOf(this), this.artifactPath(), graph);
   }
 }
