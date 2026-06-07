@@ -8,4 +8,7 @@
 //   wiki-uri · content-extraction · wiki-knowledge · wiki-search · wiki-answers · registerWiki.
 
 export * from "./content/index.js";
+export * from "./knowledge/index.js";
+export type { LlmCaller, LlmCallSpec, LlmCallUsage, LlmModels } from "./llm/index.js";
+export { resolveModel, vercelLlmCaller } from "./llm/index.js";
 export * from "./uri/index.js";
