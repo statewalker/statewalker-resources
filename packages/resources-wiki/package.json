@@ -1,8 +1,8 @@
 {
-  "name": "@statewalker/resources-workspace",
+  "name": "@statewalker/resources-wiki",
   "version": "0.1.0",
   "type": "module",
-  "description": "Resource model, adapters, utilities, and Workspace/Project/Notebook abstractions for statewalker resources",
+  "description": "Wiki capabilities for the statewalker resources framework: signal-driven builders and Project/Resource adapters that turn a project's sources into a queryable, layered, LLM-curated wiki.",
   "homepage": "https://github.com/statewalker/statewalker-resources",
   "author": {
     "name": "Mikhail Kotelnikov",
@@ -36,8 +36,19 @@
     "format": "biome format --write src"
   },
   "dependencies": {
+    "@statewalker/resources-workspace": "workspace:*",
+    "@statewalker/content-extractors": "catalog:",
+    "@statewalker/fsm": "catalog:",
+    "@statewalker/indexer-api": "catalog:",
+    "@statewalker/indexer-fulltext": "catalog:",
+    "@statewalker/indexer-mem-flexsearch": "catalog:",
+    "@statewalker/indexer-vector": "catalog:",
     "@statewalker/shared-dataflow": "catalog:",
-    "@statewalker/webrun-files": "catalog:"
+    "@statewalker/webrun-files": "catalog:",
+    "@ai-sdk/google": "catalog:",
+    "@ai-sdk/openai": "catalog:",
+    "ai": "catalog:",
+    "zod": "catalog:"
   },
   "devDependencies": {
     "@statewalker/webrun-files-mem": "catalog:",
