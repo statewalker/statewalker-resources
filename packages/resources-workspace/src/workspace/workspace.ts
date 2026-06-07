@@ -33,7 +33,10 @@ export class Workspace extends RepositoryAdapter {
     return normalizePath(name);
   }
 
-  async getProject(path: string, create = false): Promise<Project | null> {
+  async getProject(path: string, create: false): Promise<Project | null>;
+  async getProject(path: string, create: true): Promise<Project>;
+  async getProject(path: string): Promise<Project | null>;
+  async getProject(path: string, create = false) {
     const projectDirName = this.getProjectDirectory(path);
     const projectDir = await this.repository.getResource(projectDirName, create);
     if (!projectDir) return null;
