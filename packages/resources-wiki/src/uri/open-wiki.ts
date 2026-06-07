@@ -13,5 +13,5 @@ export async function openWiki(
   create = false,
 ): Promise<Project | null> {
   assertWikiKey(key);
-  return workspace.getProject(key, create);
+  return create ? workspace.getProject(key, true) : workspace.getProject(key, false);
 }

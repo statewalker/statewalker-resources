@@ -29,6 +29,7 @@
   ],
   "scripts": {
     "build": "rimraf dist && rolldown -c && tsc --emitDeclarationOnly --declaration -p tsconfig.build.json",
+    "start": "tsx bin/wiki.ts",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
@@ -52,9 +53,11 @@
   },
   "devDependencies": {
     "@statewalker/webrun-files-mem": "catalog:",
+    "@statewalker/webrun-files-node": "catalog:",
     "@types/node": "catalog:",
     "rimraf": "catalog:",
     "rolldown": "catalog:",
+    "tsx": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   },

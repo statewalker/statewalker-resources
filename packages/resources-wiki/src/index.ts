@@ -9,8 +9,8 @@
 
 export * from "./content/index.js";
 export * from "./knowledge/index.js";
-export type { LlmCaller, LlmCallSpec, LlmCallUsage, LlmModels } from "./llm/index.js";
-export { resolveModel, vercelLlmCaller } from "./llm/index.js";
+export * from "./llm/index.js";
 export * from "./query/index.js";
+export * from "./runtime/index.js";
 export * from "./search/index.js";
 export * from "./uri/index.js";
