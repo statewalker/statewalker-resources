@@ -132,9 +132,12 @@ export class SearchAdapter extends ResourceAdapter {
   /** Re-index one source resource (delete prior blocks, add current). */
   async indexPage(resource: Resource, uri: string): Promise<void> {
     const index = await this.ensureIndex();
+    const fullTextIndex = ftsAccess.get(index);
+    const vectorIndex = vecAccess.get(index);
+
     const path = toDocumentPath(uri);
-    await ftsAccess.get(index).deleteDocuments([{ path }]);
-    await vecAccess.get(index).deleteDocuments([{ path }]);
+    await fullTextIndex.deleteDocuments([{ path }]);
+    await vectorIndex.deleteDocuments([{ path }]);
 
     const blocks = await this.opts.blocks(resource, uri);
     if (blocks.length === 0) return;
@@ -144,7 +147,7 @@ export class SearchAdapter extends ResourceAdapter {
       blockId: b.blockId,
       content: b.text,
     }));
-    await ftsAccess.get(index).addDocument(ftsBlocks);
+    await fullTextIndex.addDocument(ftsBlocks);
 
     const vecBlocks: VectorBlock[] = [];
     for (const b of blocks) {
@@ -154,24 +157,27 @@ export class SearchAdapter extends ResourceAdapter {
         embedding: await this.opts.embed(b.vectorText ?? b.text),
       });
     }
-    await vecAccess.get(index).addDocument(vecBlocks);
+    await vectorIndex.addDocument(vecBlocks);
 
-    await ftsAccess.get(index).flush();
-    await vecAccess.get(index).flush();
+    await fullTextIndex.flush();
+    await vectorIndex.flush();
   }
 
   /** Remove a source's blocks from the index. */
   async removePage(uri: string): Promise<void> {
     if (!this.index) return;
     const path = toDocumentPath(uri);
-    await ftsAccess.get(this.index).deleteDocuments([{ path }]);
-    await vecAccess.get(this.index).deleteDocuments([{ path }]);
+    const fullTextIndex = ftsAccess.get(this.index);
+    const vectorIndex = vecAccess.get(this.index);
+    await fullTextIndex.deleteDocuments([{ path }]);
+    await vectorIndex.deleteDocuments([{ path }]);
   }
 
   private async ensureBuilt(): Promise<Index> {
     const index = await this.ensureIndex();
+    const fullTextIndex = ftsAccess.get(index);
     if (this.built) return index;
-    if ((await ftsAccess.get(index).getSize()) === 0) {
+    if ((await fullTextIndex.getSize()) === 0) {
       const repository = this.repository as ResourceRepository;
       for await (const resource of repository.getResources(this.resource.path, true)) {
         const uri = projectRelative(resource, this.projectPath);
@@ -189,7 +195,9 @@ export class SearchAdapter extends ResourceAdapter {
     const request: SearchRequest = { topK: query.topK ?? DEFAULT_TOP_K };
     if (query.paths) request.paths = query.paths.map(toDocumentPath);
     if (modes.includes("fts")) {
-      ftsAccess.setQuery(request, { queries: [query.query] } satisfies FulltextQuery);
+      ftsAccess.setQuery(request, {
+        queries: [query.query],
+      } satisfies FulltextQuery);
     }
     if (modes.includes("vector")) {
       vecAccess.setQuery(request, {
@@ -240,7 +248,10 @@ export function searchBuilder(opts: { inputSignal: string }): RegisteredBuilder 
     async *handler(project) {
       const builder = project.requireAdapter(ProjectBuilder);
       const search = project.requireAdapter(SearchAdapter);
-      for await (const u of builder.readUpdates({ signal: inputSignal, cell: "search-index" })) {
+      for await (const u of builder.readUpdates({
+        signal: inputSignal,
+        cell: "search-index",
+      })) {
         const resource = await project.getProjectResource(u.uri);
         if (resource) await search.indexPage(resource, u.uri);
         await u.handled();
