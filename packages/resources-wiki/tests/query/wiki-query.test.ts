@@ -179,5 +179,28 @@ describe("WikiQuery — routed retrieval", () => {
     const answer = await query.ask("Unrelated?").complete();
     expect(answer.evidenceCount).toBe(0);
     expect(answer.text).toMatch(/no supporting evidence/i);
+    expect(answer.topics).toEqual([]);
+    expect(answer.outliers).toEqual([]);
+  });
+
+  it("notifies onChange listeners as the run progresses", async () => {
+    reformulation = { topicDescent: ["company-founders"] };
+    const progress = project.requireAdapter(WikiQuery).ask("Who founded Acme?");
+    let count = 0;
+    const off = progress.onChange(() => count++);
+    await progress.complete();
+    off();
+    expect(count).toBeGreaterThan(0);
+    expect(progress.stages.map((s) => s.name)).toContain("respond");
+  });
+
+  it("aggregates topics from the evidence pages onto the answer", async () => {
+    reformulation = { topicDescent: ["company-founders"] };
+    const answer = await project.requireAdapter(WikiQuery).ask("Who founded Acme?").complete();
+    const topic = answer.topics.find((t) => t.key === "company-founders");
+    expect(topic).toBeDefined();
+    expect(topic?.name).toBe("Company founders");
+    // Cited as a canonical wiki:// reference to the covered section.
+    expect(topic?.citations.some((c) => c.uri.includes("a.md#founders"))).toBe(true);
   });
 });

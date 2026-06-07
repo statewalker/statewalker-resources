@@ -10,7 +10,15 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { type Answer, registerSnapshots, WikiSnapshotsAdapter } from "../../src/index.js";
 
 function answer(text: string): Answer {
-  return { text, citations: [], caveats: [], suggestions: [], evidenceCount: 1 };
+  return {
+    text,
+    citations: [],
+    caveats: [],
+    suggestions: [],
+    topics: [],
+    outliers: [],
+    evidenceCount: 1,
+  };
 }
 
 describe("WikiSnapshotsAdapter", () => {

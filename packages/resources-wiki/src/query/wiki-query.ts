@@ -6,10 +6,14 @@ import {
 } from "@statewalker/resources-workspace";
 import { z } from "zod";
 import { WikiTopicIndex } from "../knowledge/indexes.js";
-import { ResourceTextContentCache, WikiPageSummary } from "../knowledge/page-adapters.js";
+import {
+  ResourceTextContentCache,
+  WikiPageMeta,
+  WikiPageSummary,
+} from "../knowledge/page-adapters.js";
 import { type LlmCaller, type LlmModels, resolveModel } from "../llm/index.js";
 import { SearchAdapter } from "../search/index.js";
-import { parseWikiUri } from "../uri/wiki-uri.js";
+import { parseWikiUri, toCanonical } from "../uri/wiki-uri.js";
 
 /** How far retrieval may descend. */
 export type QueryDepth = "summaries" | "source-sections";
@@ -29,11 +33,23 @@ export interface ReformulationOutput {
   topicDescent?: string[];
 }
 
+/** A topic/outlier class the answer's evidence touched, with its covering citations. */
+export interface AnswerTopic {
+  key: string;
+  name: string;
+  description?: string;
+  citations: { uri: string }[];
+}
+
 export interface Answer {
   text: string;
   citations: string[];
   caveats: string[];
   suggestions: string[];
+  /** Topic classes covered by the retrieved evidence, cited to their sections. */
+  topics: AnswerTopic[];
+  /** Outlier classes covered by the retrieved evidence, cited to their sections. */
+  outliers: AnswerTopic[];
   /** Number of evidence sections the answer was grounded in (0 = negative answer). */
   evidenceCount: number;
 }
@@ -84,18 +100,33 @@ export class QueryProgress {
   error?: unknown;
   private resolvers: ((a: Answer) => void)[] = [];
   private rejecters: ((e: unknown) => void)[] = [];
+  private listeners: (() => void)[] = [];
+
+  /** Subscribe to progress changes (each stage transition and terminal state). Returns an unsubscribe. */
+  onChange(listener: () => void): () => void {
+    this.listeners.push(listener);
+    return () => {
+      this.listeners = this.listeners.filter((l) => l !== listener);
+    };
+  }
+  private emit(): void {
+    for (const l of this.listeners) l();
+  }
 
   stage(name: string): void {
     this.stages.push({ name, status: "running" });
+    this.emit();
   }
   _finish(answer: Answer): void {
     this.answer = answer;
     if (this.stages.length) this.stages[this.stages.length - 1].status = "done";
+    this.emit();
     for (const r of this.resolvers) r(answer);
   }
   _fail(error: unknown): void {
     this.error = error;
     if (this.stages.length) this.stages[this.stages.length - 1].status = "failed";
+    this.emit();
     for (const r of this.rejecters) r(error);
   }
   complete(): Promise<Answer> {
@@ -212,10 +243,14 @@ export class WikiQuery extends ResourceAdapter {
         citations: [],
         caveats: [],
         suggestions: [],
+        topics: [],
+        outliers: [],
         evidenceCount: 0,
       });
       return;
     }
+
+    const { topics, outliers } = await this.aggregateClasses(progress.evidence);
 
     progress.stage("respond");
     const { output: composed } = await this.opts.llm.generate({
@@ -248,8 +283,58 @@ export class WikiQuery extends ResourceAdapter {
       citations,
       caveats,
       suggestions: composed.suggestions,
+      topics,
+      outliers,
       evidenceCount: progress.evidence.length,
     });
+  }
+
+  /**
+   * Aggregate the topic/outlier classes the retrieved evidence touches. For each
+   * evidence page we read its `WikiPageMeta` and keep every declared class whose
+   * `sectionKeys` intersect the retrieved sections, citing each covered section as
+   * a canonical `wiki://` reference. Classes are unioned across pages by key.
+   */
+  private async aggregateClasses(
+    evidence: EvidenceSection[],
+  ): Promise<{ topics: AnswerTopic[]; outliers: AnswerTopic[] }> {
+    const key = this.project.projectName;
+    const sectionsByUri = new Map<string, Set<string>>();
+    for (const e of evidence) {
+      const set = sectionsByUri.get(e.uri) ?? new Set<string>();
+      set.add(e.sectionKey);
+      sectionsByUri.set(e.uri, set);
+    }
+
+    const topics = new Map<string, AnswerTopic>();
+    const outliers = new Map<string, AnswerTopic>();
+    const collect = (
+      decls: { key: string; name: string; description?: string; sectionKeys: string[] }[],
+      uri: string,
+      covered: Set<string>,
+      target: Map<string, AnswerTopic>,
+    ) => {
+      for (const d of decls) {
+        const hits = d.sectionKeys.filter((sk) => covered.has(sk));
+        if (hits.length === 0) continue;
+        const agg =
+          target.get(d.key) ??
+          ({ key: d.key, name: d.name, description: d.description, citations: [] } as AnswerTopic);
+        for (const sk of hits) {
+          agg.citations.push({ uri: toCanonical({ key, path: uri, section: sk }, key) });
+        }
+        target.set(d.key, agg);
+      }
+    };
+
+    for (const [uri, covered] of sectionsByUri) {
+      const resource = await this.project.getProjectResource(uri);
+      const meta = await resource?.requireAdapter(WikiPageMeta).get();
+      if (!meta) continue;
+      collect(meta.topics, uri, covered, topics);
+      collect(meta.outliers, uri, covered, outliers);
+    }
+    return { topics: [...topics.values()], outliers: [...outliers.values()] };
   }
 
   /** Build an evidence section from a page's summary + raw text block. */
