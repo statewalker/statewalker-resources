@@ -50,30 +50,30 @@ export function graphBuilder(deps: KnowledgeBuilderDeps): RegisteredBuilder {
         cell: GRAPH_BUILDER_ID,
       })) {
         const resource = await project.getProjectResource(u.uri);
+        const summary = await resource?.requireAdapter(WikiPageSummary).get();
+        if (resource && summary) {
+          const { output } = await deps.llm.generate({
+            name: "extract-document-graph",
+            description:
+              "Per-section structured signal: entities plus [subject, predicate, object] statements (object is a literal) and relations (object is an entity). Subject is always an entity.value.",
+            model: resolveModel(deps.models, "graph"),
+            system,
+            input: { uri: u.uri, sections: summary.sections },
+            inputSchema: graphExtractorInputSchema,
+            outputSchema: documentGraphSchema,
+            abortSignal: deps.abortSignal,
+          });
+
+          const graph: DocumentGraph = {
+            uri: u.uri,
+            generated: new Date().toISOString(),
+            sections: filterUnknownSubjects(output.sections),
+          };
+          await resource.requireAdapter(WikiPageGraph).write(graph);
+          yield { signal: GRAPH_SIGNAL, uri: u.uri, stamp: u.stamp };
+        }
         await u.handled();
-        if (!resource) continue;
-        const summary = await resource.requireAdapter(WikiPageSummary).get();
-        if (!summary) continue;
-
-        const { output } = await deps.llm.generate({
-          name: "extract-document-graph",
-          description:
-            "Per-section structured signal: entities plus [subject, predicate, object] statements (object is a literal) and relations (object is an entity). Subject is always an entity.value.",
-          model: resolveModel(deps.models, "graph"),
-          system,
-          input: { uri: u.uri, sections: summary.sections },
-          inputSchema: graphExtractorInputSchema,
-          outputSchema: documentGraphSchema,
-          abortSignal: deps.abortSignal,
-        });
-
-        const graph: DocumentGraph = {
-          uri: u.uri,
-          generated: new Date().toISOString(),
-          sections: filterUnknownSubjects(output.sections),
-        };
-        await resource.requireAdapter(WikiPageGraph).write(graph);
-        yield { signal: GRAPH_SIGNAL, uri: u.uri, stamp: u.stamp };
+        if (!(await builder.yieldControl())) return false;
       }
       return true;
     },

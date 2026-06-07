@@ -41,10 +41,42 @@ interface Stores {
  * transaction stores (persisted under the project system folder), and provides
  * generic source change-detection. Knows nothing wiki-specific.
  */
+/**
+ * Cooperative-yield throttle config. Defaults keep a long build from starving the
+ * event loop: a short pause every `pauseEvery` yields, and a re-run-requesting
+ * interrupt every `interruptEvery` yields. Override via the repository option
+ * `builderYield`.
+ */
+export interface YieldConfig {
+  /** Pause (await `pauseMs`) once every this many `yieldControl` calls. */
+  pauseEvery: number;
+  /** Pause duration in ms. */
+  pauseMs: number;
+  /** Return `false` (request interrupt + re-run) once every this many calls. */
+  interruptEvery: number;
+  /** Safety cap on `run()` convergence passes. */
+  maxPasses: number;
+}
+
+const DEFAULT_YIELD_CONFIG: YieldConfig = {
+  pauseEvery: 10,
+  pauseMs: 10,
+  interruptEvery: 100,
+  maxPasses: 1000,
+};
+
 export class ProjectBuilder extends ResourceAdapter {
   private readonly builders = new Map<string, RegisteredBuilder>();
   private graph?: DataflowGraph;
   private stores?: Stores;
+  private yieldCounter = 0;
+
+  private get yieldConfig(): YieldConfig {
+    return {
+      ...DEFAULT_YIELD_CONFIG,
+      ...((this.repository.options.builderYield as Partial<YieldConfig> | undefined) ?? {}),
+    };
+  }
 
   private get filesApi(): FilesApi {
     return (this.repository as { filesApi: FilesApi }).filesApi;
@@ -130,8 +162,22 @@ export class ProjectBuilder extends ResourceAdapter {
     }
   }
 
-  /** Cooperative yield point for long-running builders. Always grants continuation. */
+  /**
+   * Cooperative yield point for long-running builders. Builders MUST call this once
+   * per processed item. It pauses briefly every `pauseEvery` calls to release the
+   * event loop, and returns `false` every `interruptEvery` calls to request the
+   * builder interrupt (return `false`) so `run()` can re-seed it on the next pass —
+   * keeping a large build from monopolising CPU/memory.
+   */
   async yieldControl(): Promise<boolean> {
+    const cfg = this.yieldConfig;
+    this.yieldCounter += 1;
+    if (cfg.pauseEvery > 0 && this.yieldCounter % cfg.pauseEvery === 0) {
+      await new Promise<void>((r) => setTimeout(r, cfg.pauseMs));
+    }
+    if (cfg.interruptEvery > 0 && this.yieldCounter % cfg.interruptEvery === 0) {
+      return false;
+    }
     return true;
   }
 
@@ -171,19 +217,35 @@ export class ProjectBuilder extends ResourceAdapter {
       onError: (_cellId, error) => errors.push(error),
     });
 
-    const seeds = opts?.builders ? { cells: opts.builders } : undefined;
+    // Convergence loop: re-seed any cell that interrupted (returned `false`) until
+    // none do, or the safety cap is hit. Builders interrupt cooperatively via
+    // `yieldControl`, so a large build progresses in bounded passes.
+    const maxPasses = this.yieldConfig.maxPasses;
+    let seeds: { cells: string[] } | undefined = opts?.builders
+      ? { cells: opts.builders }
+      : undefined;
     try {
-      for await (const stage of manager.run(seeds)) {
-        if (stage.type === "begin") yield { type: "begin", transactionId: stage.transactionId };
-        else if (stage.type === "end") yield { type: "end", transactionId: stage.transactionId };
-        else if (stage.cellId !== SCAN_CELL) {
-          yield {
-            type: "call",
-            transactionId: stage.transactionId,
-            builderId: stage.cellId,
-            result: stage.result,
-          };
+      for (let pass = 0; pass < maxPasses; pass++) {
+        const interrupted = new Set<string>();
+        for await (const stage of manager.run(seeds)) {
+          if (stage.type === "begin") {
+            yield { type: "begin", transactionId: stage.transactionId };
+          } else if (stage.type === "end") {
+            yield { type: "end", transactionId: stage.transactionId };
+          } else {
+            if (!stage.result) interrupted.add(stage.cellId);
+            if (stage.cellId !== SCAN_CELL) {
+              yield {
+                type: "call",
+                transactionId: stage.transactionId,
+                builderId: stage.cellId,
+                result: stage.result,
+              };
+            }
+          }
         }
+        if (interrupted.size === 0) break;
+        seeds = { cells: [...interrupted] };
       }
     } finally {
       await this.flush(stores);

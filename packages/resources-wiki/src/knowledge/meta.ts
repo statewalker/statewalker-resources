@@ -34,45 +34,46 @@ export function metaBuilder(deps: KnowledgeBuilderDeps): RegisteredBuilder {
         cell: META_BUILDER_ID,
       })) {
         const resource = await project.getProjectResource(u.uri);
-        await u.handled();
-        if (!resource) continue;
-        const summary = await resource.requireAdapter(WikiPageSummary).get();
-        if (!summary) continue;
-        const prior = await resource.requireAdapter(WikiPageMeta).get();
+        const summary = await resource?.requireAdapter(WikiPageSummary).get();
+        if (resource && summary) {
+          const prior = await resource.requireAdapter(WikiPageMeta).get();
 
-        const { output } = await deps.llm.generate({
-          name: "extract-document-meta",
-          description:
-            "Declare the topic and outlier classes covered by this document. Reuse existing class keys; copy their description verbatim. Mark outliers only when the source itself flags surprise.",
-          model: resolveModel(deps.models, "meta"),
-          system,
-          input: { uri: u.uri, summary, existingClasses },
-          inputSchema: metaExtractorInputSchema,
-          outputSchema: documentMetaSchema,
-          abortSignal: deps.abortSignal,
-        });
+          const { output } = await deps.llm.generate({
+            name: "extract-document-meta",
+            description:
+              "Declare the topic and outlier classes covered by this document. Reuse existing class keys; copy their description verbatim. Mark outliers only when the source itself flags surprise.",
+            model: resolveModel(deps.models, "meta"),
+            system,
+            input: { uri: u.uri, summary, existingClasses },
+            inputSchema: metaExtractorInputSchema,
+            outputSchema: documentMetaSchema,
+            abortSignal: deps.abortSignal,
+          });
 
-        const meta: DocumentMeta = {
-          uri: u.uri,
-          generated: new Date().toISOString(),
-          topics: output.topics,
-          outliers: output.outliers,
-        };
-        await resource.requireAdapter(WikiPageMeta).write(meta);
-        yield { signal: META_SIGNAL, uri: u.uri, stamp: u.stamp };
+          const meta: DocumentMeta = {
+            uri: u.uri,
+            generated: new Date().toISOString(),
+            topics: output.topics,
+            outliers: output.outliers,
+          };
+          await resource.requireAdapter(WikiPageMeta).write(meta);
+          yield { signal: META_SIGNAL, uri: u.uri, stamp: u.stamp };
 
-        if (prior) {
-          const newKeys = new Set(meta.topics.map((t) => t.key));
-          for (const t of prior.topics) {
-            if (!newKeys.has(t.key)) {
-              yield {
-                signal: META_REMOVED_TOPICS_SIGNAL,
-                uri: `${u.uri}#${t.key}`,
-                stamp: u.stamp,
-              };
+          if (prior) {
+            const newKeys = new Set(meta.topics.map((t) => t.key));
+            for (const t of prior.topics) {
+              if (!newKeys.has(t.key)) {
+                yield {
+                  signal: META_REMOVED_TOPICS_SIGNAL,
+                  uri: `${u.uri}#${t.key}`,
+                  stamp: u.stamp,
+                };
+              }
             }
           }
         }
+        await u.handled();
+        if (!(await builder.yieldControl())) return false;
       }
       return true;
     },

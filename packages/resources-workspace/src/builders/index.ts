@@ -1,3 +1,4 @@
+export type { YieldConfig } from "./project-builder.js";
 export {
   ProjectBuilder,
   SCAN_CELL,

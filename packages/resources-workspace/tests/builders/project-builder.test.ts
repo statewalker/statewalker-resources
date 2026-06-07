@@ -37,8 +37,9 @@ function passthrough(id: string, input: string, output: string, seen: string[]):
       const builder = project.requireAdapter(ProjectBuilder);
       for await (const u of builder.readUpdates({ signal: input, cell: id })) {
         seen.push(`${id}:${u.uri}`);
-        await u.handled();
         yield { signal: output, uri: u.uri, stamp: u.stamp };
+        await u.handled();
+        if (!(await builder.yieldControl())) return false;
       }
       return true;
     },
@@ -149,5 +150,37 @@ describe("ProjectBuilder", () => {
     const extract = before.builders.find((b) => b.id === "extract");
     expect(extract?.pending).toBe(0);
     expect(extract?.lastTransaction).toBeGreaterThan(0);
+  });
+
+  it("converges across yieldControl interrupts, processing every item once", async () => {
+    // interruptEvery: 2 makes the passthrough's yieldControl return false on every
+    // 2nd item, forcing the builder to interrupt; run() must re-seed it until done.
+    const filesApi = new MemFilesApi({
+      initialFiles: { "p/1.md": "1", "p/2.md": "2", "p/3.md": "3", "p/4.md": "4", "p/5.md": "5" },
+    });
+    const repo = new ResourceRepository({
+      filesApi,
+      builderYield: { interruptEvery: 2, pauseEvery: 0, pauseMs: 0, maxPasses: 100 },
+    });
+    repo.register("", ContentReadAdapter);
+    repo.register("", ContentWriteAdapter);
+    repo.register("", TextAdapter);
+    repo.register("", Project);
+    repo.register("", ProjectBuilder);
+    repo.register(ResourceRepository, Workspace);
+    const workspace = repo.requireAdapter<Workspace>(Workspace);
+    const project = await workspace.getProject("p");
+    const builder = project?.requireAdapter(ProjectBuilder);
+    const seen: string[] = [];
+    builder?.registerBuilder(passthrough("extract", "sources", "content", seen));
+    await drain(builder?.run() ?? (async function* () {})());
+
+    expect(seen.sort()).toEqual([
+      "extract:1.md",
+      "extract:2.md",
+      "extract:3.md",
+      "extract:4.md",
+      "extract:5.md",
+    ]);
   });
 });

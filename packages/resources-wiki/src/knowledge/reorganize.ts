@@ -1,4 +1,5 @@
 import {
+  type BuilderUpdate,
   type Project,
   ProjectBuilder,
   type RegisteredBuilder,
@@ -79,14 +80,19 @@ export function reorganizeBuilder(): RegisteredBuilder {
     // biome-ignore lint/correctness/useYield: rebuilds a global artifact; emits no signal
     async *handler(project) {
       const builder = project.requireAdapter(ProjectBuilder);
-      let dirty = false;
+      const pending: BuilderUpdate[] = [];
       for (const signal of inputs) {
         for await (const u of builder.readUpdates({ signal, cell: REORGANIZE_BUILDER_ID })) {
-          dirty = true;
-          await u.handled();
+          pending.push(u);
         }
       }
-      if (dirty) await rebuildIndexes(project);
+      if (pending.length > 0) {
+        // Rebuild first; only then mark the inputs handled, so an interrupted run
+        // re-triggers the rebuild rather than silently skipping it.
+        await rebuildIndexes(project);
+        for (const u of pending) await u.handled();
+      }
+      await builder.yieldControl();
       return true;
     },
   };
@@ -115,6 +121,7 @@ export function pruneBuilder(): RegisteredBuilder {
           // already gone — fine
         }
         await u.handled();
+        if (!(await builder.yieldControl())) return false;
       }
       return true;
     },

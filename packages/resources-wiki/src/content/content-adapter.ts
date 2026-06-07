@@ -97,9 +97,11 @@ export function contentBuilder(): RegisteredBuilder {
         cell: CONTENT_BUILDER_ID,
       })) {
         const resource = await project.getProjectResource(u.uri);
-        const extractable = !!resource?.getAdapter(ContentAdapter);
+        if (resource?.getAdapter(ContentAdapter)) {
+          yield { signal: CONTENT_SIGNAL, uri: u.uri, stamp: u.stamp };
+        }
         await u.handled();
-        if (extractable) yield { signal: CONTENT_SIGNAL, uri: u.uri, stamp: u.stamp };
+        if (!(await builder.yieldControl())) return false;
       }
       return true;
     },
