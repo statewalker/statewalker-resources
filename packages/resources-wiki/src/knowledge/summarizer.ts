@@ -42,7 +42,9 @@ export function summarizeBuilder(deps: KnowledgeBuilderDeps): RegisteredBuilder 
         cell: SUMMARIZE_BUILDER_ID,
       })) {
         const resource = await project.getProjectResource(u.uri);
-        const text = await resource?.requireAdapter(ResourceTextContentCache).getTextContent();
+        // Refresh (re-extract) the raw-text cache: the summarizer only runs when the
+        // source content changed, so the cached raw.txt may be stale.
+        const text = await resource?.requireAdapter(ResourceTextContentCache).refreshTextContent();
         if (resource && text) {
           const { output } = await deps.llm.generate({
             name: "summarize-document",
