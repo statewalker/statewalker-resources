@@ -11,12 +11,14 @@ import { describe, expect, it } from "vitest";
 import {
   CrossWikiRefError,
   formatCitation,
+  InvalidWikiPathError,
   isCrossWiki,
   normalizeWikiUri,
   openWiki,
   parseCitation,
   parseWikiUri,
   toCanonical,
+  validateWikiPath,
   WikiKeyError,
 } from "../../src/index.js";
 
@@ -69,6 +71,35 @@ describe("wiki:// URI scheme", () => {
   it("rejects a malformed path", () => {
     expect(() => parseWikiUri("notes//a.md")).toThrow();
     expect(() => parseWikiUri("../escape.md")).toThrow();
+  });
+});
+
+// Migrated from wiki-runtime/tests/uri.test.ts — path-validation parity for the
+// bare internal URI (now validateWikiPath).
+describe("validateWikiPath (migrated path-validation parity)", () => {
+  it("accepts source-relative paths with extensions", () => {
+    expect(() => validateWikiPath("acme.md")).not.toThrow();
+    expect(() => validateWikiPath("notes/guide/intro.pdf")).not.toThrow();
+  });
+
+  it("treats two files differing only by extension as distinct, valid URIs", () => {
+    expect("acme.pdf").not.toBe("acme.md");
+    expect(() => validateWikiPath("acme.pdf")).not.toThrow();
+    expect(() => validateWikiPath("acme.md")).not.toThrow();
+  });
+
+  it("rejects empty / leading-slash / trailing-slash / double-slash paths", () => {
+    expect(() => validateWikiPath("")).toThrow(InvalidWikiPathError);
+    expect(() => validateWikiPath("/a.md")).toThrow(InvalidWikiPathError);
+    expect(() => validateWikiPath("a/")).toThrow(InvalidWikiPathError);
+    expect(() => validateWikiPath("a//b.md")).toThrow(InvalidWikiPathError);
+  });
+
+  it("rejects '.' / '..' segments and '#'", () => {
+    expect(() => validateWikiPath("../escape.md")).toThrow(InvalidWikiPathError);
+    expect(() => validateWikiPath("a/../b.md")).toThrow(InvalidWikiPathError);
+    expect(() => validateWikiPath("./x.md")).toThrow(InvalidWikiPathError);
+    expect(() => validateWikiPath("a#b.md")).toThrow(InvalidWikiPathError);
   });
 });
 
