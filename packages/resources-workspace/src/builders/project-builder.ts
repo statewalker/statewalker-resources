@@ -57,6 +57,12 @@ export interface YieldConfig {
   interruptEvery: number;
   /** Safety cap on `run()` convergence passes. */
   maxPasses: number;
+  /**
+   * Minimum gap (ms) between state flushes while a build is running. State is
+   * persisted as each cell's transaction id advances, throttled to this interval
+   * so a fast pipeline does not storm the disk. `0` flushes on every change.
+   */
+  flushThrottleMs: number;
 }
 
 const DEFAULT_YIELD_CONFIG: YieldConfig = {
@@ -64,6 +70,7 @@ const DEFAULT_YIELD_CONFIG: YieldConfig = {
   pauseMs: 10,
   interruptEvery: 100,
   maxPasses: 1000,
+  flushThrottleMs: 250,
 };
 
 export class ProjectBuilder extends ResourceAdapter {
@@ -71,6 +78,8 @@ export class ProjectBuilder extends ResourceAdapter {
   private graph?: DataflowGraph;
   private stores?: Stores;
   private yieldCounter = 0;
+  /** Timestamp (ms) of the last state flush — drives `maybeFlush` throttling. */
+  private lastFlushAt = 0;
 
   private get yieldConfig(): YieldConfig {
     return {
@@ -222,45 +231,75 @@ export class ProjectBuilder extends ResourceAdapter {
       onError: (_cellId, error) => errors.push(error),
     });
 
-    // Convergence loop: re-seed any cell that interrupted (returned `false`) until
-    // none do, or the safety cap is hit. Builders interrupt cooperatively via
-    // `yieldControl`, so a large build progresses in bounded passes.
-    const maxPasses = this.yieldConfig.maxPasses;
-    let seeds: { cells: string[] } | undefined = opts?.builders
-      ? { cells: opts.builders }
-      : undefined;
     try {
-      for (let pass = 0; pass < maxPasses; pass++) {
-        const interrupted = new Set<string>();
-        for await (const stage of manager.run(seeds)) {
-          if (stage.type === "begin") {
-            yield { type: "begin", transactionId: stage.transactionId };
-          } else if (stage.type === "end") {
-            // Persist progress at each committed transaction so an interrupted build
-            // (process kill, timeout) resumes from here rather than re-running — and
-            // re-spending LLM credits — on the already-extracted pages.
-            await this.flush(stores);
-            yield { type: "end", transactionId: stage.transactionId };
-          } else {
-            if (!stage.result) interrupted.add(stage.cellId);
-            if (stage.cellId !== SCAN_CELL) {
-              yield {
-                type: "call",
-                transactionId: stage.transactionId,
-                builderId: stage.cellId,
-                result: stage.result,
-              };
-            }
-          }
-        }
-        if (interrupted.size === 0) break;
-        seeds = { cells: [...interrupted] };
+      if (!opts?.builders) {
+        // Drain-first: finish any in-flight batch (stages left behind by an
+        // interrupted run) before the scanner emits a new top-level batch, so
+        // started batches complete before new ones begin.
+        const behind = await this.behindCells(stores, graph);
+        if (behind.length > 0) yield* this.converge(manager, stores, { cells: behind });
       }
+      const seeds = opts?.builders ? { cells: opts.builders } : undefined;
+      yield* this.converge(manager, stores, seeds);
     } finally {
       await this.flush(stores);
     }
 
     if (errors.length > 0) throw errors[0];
+  }
+
+  /**
+   * Drive the manager to convergence from `initialSeeds`: re-seed any cell that
+   * interrupted (returned `false`) until none do or the safety cap is hit. State is
+   * persisted as each cell's transaction advances (throttled) and at every
+   * committed transaction boundary, so an interrupted build resumes in place.
+   */
+  private async *converge(
+    manager: UpdatesManager,
+    stores: Stores,
+    initialSeeds: { cells: string[] } | undefined,
+  ): AsyncGenerator<BuildProgress> {
+    const maxPasses = this.yieldConfig.maxPasses;
+    let seeds = initialSeeds;
+    for (let pass = 0; pass < maxPasses; pass++) {
+      const interrupted = new Set<string>();
+      for await (const stage of manager.run(seeds)) {
+        if (stage.type === "begin") {
+          yield { type: "begin", transactionId: stage.transactionId };
+        } else if (stage.type === "end") {
+          await this.flush(stores);
+          yield { type: "end", transactionId: stage.transactionId };
+        } else {
+          if (!stage.result) interrupted.add(stage.cellId);
+          // Persist the cell's freshly-advanced transaction id before reporting it.
+          await this.maybeFlush(stores);
+          if (stage.cellId !== SCAN_CELL) {
+            yield {
+              type: "call",
+              transactionId: stage.transactionId,
+              builderId: stage.cellId,
+              result: stage.result,
+            };
+          }
+        }
+      }
+      if (interrupted.size === 0) break;
+      seeds = { cells: [...interrupted] };
+    }
+  }
+
+  /**
+   * Cells lagging the rest of the pipeline: their last-committed transaction is
+   * below the maximum across all cells — i.e. an interrupted run left them behind.
+   * Draining these before re-scanning finishes the in-flight batch first.
+   */
+  private async behindCells(stores: Stores, graph: DataflowGraph): Promise<string[]> {
+    const cells = graph.getAllCells();
+    const txs = await Promise.all(
+      cells.map(async (c) => [c, await stores.transactions.getCellTransaction(c)] as const),
+    );
+    const max = Math.max(0, ...txs.map(([, t]) => t));
+    return txs.filter(([, t]) => t < max).map(([c]) => c);
   }
 
   /** Per-builder pending counts and last-run transaction ids. */
@@ -350,5 +389,13 @@ export class ProjectBuilder extends ResourceAdapter {
       stores.scannerPath,
       Object.fromEntries(stores.scannerState),
     );
+    this.lastFlushAt = Date.now();
+  }
+
+  /** Flush state, throttled to at most once per `flushThrottleMs` while running. */
+  private async maybeFlush(stores: Stores): Promise<void> {
+    if (Date.now() - this.lastFlushAt >= this.yieldConfig.flushThrottleMs) {
+      await this.flush(stores);
+    }
   }
 }

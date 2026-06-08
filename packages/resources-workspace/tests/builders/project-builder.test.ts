@@ -231,6 +231,52 @@ describe("ProjectBuilder", () => {
     expect(scanner && Object.keys(scanner).sort()).toEqual(["a.md", "notes/b.md"]);
   });
 
+  it("drains a behind stage before re-scanning for new work (drain-first)", async () => {
+    const builder = await openBuilder();
+    const extractSeen: string[] = [];
+    const indexSeen: string[] = [];
+    builder.registerBuilder(passthrough("extract", "sources", "content", extractSeen));
+    builder.registerBuilder(passthrough("index", "content", "indexed", indexSeen));
+    await drain(builder.run());
+
+    // Leave 'index' behind (as an interrupted downstream stage would be).
+    await builder.restartFrom("index");
+    indexSeen.length = 0;
+    const order: string[] = [];
+    for await (const stage of builder.run()) {
+      if (stage.type === "call") order.push(stage.builderId);
+    }
+    // The behind stage is drained first — before 'extract' runs again in the scan phase.
+    expect(order[0]).toBe("index");
+    expect(indexSeen.sort()).toEqual(["index:a.md", "index:notes/b.md"]);
+  });
+
+  it("flushes state as each cell's transaction advances, not only at the end", async () => {
+    const filesApi = new MemFilesApi({ initialFiles: { "p/a.md": "A" } });
+    const repo = new ResourceRepository({ filesApi, builderYield: { flushThrottleMs: 0 } });
+    repo.register("", ContentReadAdapter);
+    repo.register("", ContentWriteAdapter);
+    repo.register("", TextAdapter);
+    repo.register("", Project);
+    repo.register("", ProjectBuilder);
+    repo.register(ResourceRepository, Workspace);
+    const project = await repo.requireAdapter<Workspace>(Workspace).getProject("p");
+    const builder = project!.requireAdapter(ProjectBuilder);
+    builder.registerBuilder(passthrough("extract", "sources", "content", []));
+
+    // Stop at the first builder 'call' — before the transaction 'end'.
+    const gen = builder.run();
+    for (let r = await gen.next(); !r.done; r = await gen.next()) {
+      if ((r.value as { type: string }).type === "call") break;
+    }
+    // The scanner and extract were both committed and flushed before any 'end'.
+    const tx = await tryReadJson<{ cellTransactions: Record<string, number> }>(
+      filesApi,
+      "p/.project/state/transactions.json",
+    );
+    expect(Object.keys(tx?.cellTransactions ?? {}).sort()).toEqual(["@scan", "extract"]);
+  });
+
   it("reports pending counts via status before a run and zero after", async () => {
     const builder = await openBuilder();
     builder.registerBuilder(passthrough("extract", "sources", "content", []));
