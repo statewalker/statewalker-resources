@@ -7,6 +7,7 @@ export {
 } from "./snapshots.js";
 export {
   type Answer,
+  type AnswerTopic,
   type EvidenceSection,
   type QueryDepth,
   QueryProgress,
