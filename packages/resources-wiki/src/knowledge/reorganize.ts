@@ -40,21 +40,25 @@ async function rebuildIndexes(project: Project): Promise<void> {
           references: [],
         } as GlobalTopic);
       if (!g.description && t.description) g.description = t.description;
-      g.references.push({ uri: meta.uri });
+      // Reference the per-document topic (`<uri>#<topicKey>`), not just the document,
+      // so a global topic links back to each source's specific declaration.
+      g.references.push({ uri: `${meta.uri}#${t.key}` });
       topics.set(t.key, g);
     }
     for (const o of meta.outliers) {
+      // Merge outliers the extractor tagged with a shared global class.
+      const key = o.globalClass ?? o.key;
       const g =
-        outliers.get(o.key) ??
+        outliers.get(key) ??
         ({
-          key: o.key,
+          key,
           name: o.name,
           description: o.description ?? "",
           references: [],
         } as GlobalOutlier);
       if (!g.description && o.description) g.description = o.description;
-      g.references.push({ uri: meta.uri });
-      outliers.set(o.key, g);
+      g.references.push({ uri: `${meta.uri}#${o.key}` });
+      outliers.set(key, g);
     }
   }
 

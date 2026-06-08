@@ -130,7 +130,7 @@ describe.each(["mem", "node"] as const)("registerWiki end-to-end (%s FilesApi)",
     const summary = await resource?.requireAdapter(WikiPageSummary).get();
     expect(summary?.title).toBe("Acme");
     const topic = await project.requireAdapter(WikiTopicIndex).get("companies");
-    expect(topic?.references.map((r) => r.uri)).toEqual(["a.md"]);
+    expect(topic?.references.map((r) => r.uri)).toEqual(["a.md#companies"]);
 
     // Status reports no pending work after a full scan.
     const status = await builder.status();

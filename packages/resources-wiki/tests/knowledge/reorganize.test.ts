@@ -88,9 +88,13 @@ describe("reorganizer + pruner", () => {
       // drain
     }
 
-    // Both docs declared `company-founders` → one global topic, two references.
+    // Both docs declared `company-founders` → one global topic, referencing each
+    // document's specific topic declaration (`<uri>#<topicKey>`).
     const topic = await project.requireAdapter(WikiTopicIndex).get("company-founders");
-    expect(topic?.references.map((r) => r.uri).sort()).toEqual(["a.md", "b.md"]);
+    expect(topic?.references.map((r) => r.uri).sort()).toEqual([
+      "a.md#company-founders",
+      "b.md#company-founders",
+    ]);
 
     // Remove one source; the next run detects the deletion, reorganizes, and prunes.
     await filesApi.remove("proj/b.md");
@@ -99,6 +103,6 @@ describe("reorganizer + pruner", () => {
     }
 
     const after = await project.requireAdapter(WikiTopicIndex).get("company-founders");
-    expect(after?.references.map((r) => r.uri)).toEqual(["a.md"]);
+    expect(after?.references.map((r) => r.uri)).toEqual(["a.md#company-founders"]);
   });
 });

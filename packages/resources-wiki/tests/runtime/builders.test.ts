@@ -150,7 +150,7 @@ describe("wiki builders — incremental behaviour", () => {
     await scan(project);
     expect(
       (await project.requireAdapter(WikiTopicIndex).get("bravo"))?.references.map((r) => r.uri),
-    ).toEqual(["b.md"]);
+    ).toEqual(["b.md#bravo"]);
 
     await filesApi.remove("proj/b.md");
     await scan(project);

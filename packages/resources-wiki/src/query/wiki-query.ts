@@ -227,9 +227,11 @@ export class WikiQuery extends ResourceAdapter {
         );
         if (!match) continue;
         for (const ref of topic.references) {
-          const resource = await this.project.getProjectResource(ref.uri);
+          // References are `<uri>#<topicKey>` — descend to the source document.
+          const docUri = parseWikiUri(ref.uri).path;
+          const resource = await this.project.getProjectResource(docUri);
           const summary = await resource?.requireAdapter(WikiPageSummary).get();
-          for (const section of summary?.sections ?? []) await add(ref.uri, section.key);
+          for (const section of summary?.sections ?? []) await add(docUri, section.key);
         }
       }
     }
