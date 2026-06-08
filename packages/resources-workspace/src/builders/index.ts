@@ -5,6 +5,11 @@ export {
   SOURCES_REMOVED_SIGNAL,
   SOURCES_SIGNAL,
 } from "./project-builder.js";
+export {
+  compileIgnoreRules,
+  type IgnoreRule,
+  makeProjectIgnore,
+} from "./project-ignore.js";
 export { FileBackedTransactionStore } from "./transaction-store.js";
 export type {
   BuilderHandler,

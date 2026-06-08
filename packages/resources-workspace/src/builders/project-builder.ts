@@ -5,12 +5,13 @@ import {
   readCellUpdates,
   UpdatesManager,
 } from "@statewalker/shared-dataflow";
-import type { FilesApi } from "@statewalker/webrun-files";
+import { type FilesApi, tryReadText } from "@statewalker/webrun-files";
 import { ResourceAdapter } from "../core/index.js";
 import { concatPath } from "../utils/index.js";
 import { Project } from "../workspace/project.js";
 import { DEFAULT_SYSTEM_FOLDER } from "../workspace/workspace.js";
 import { tryReadJson, writeJsonAtomic } from "./json-io.js";
+import { makeProjectIgnore } from "./project-ignore.js";
 import { FileBackedTransactionStore } from "./transaction-store.js";
 import type {
   BuilderUpdate,
@@ -296,6 +297,12 @@ export class ProjectBuilder extends ResourceAdapter {
   private async scan(stores: Stores, transactionId: number): Promise<void> {
     const { updates, scannerState } = stores;
     const base = this.project.path.replace(/^\/+|\/+$/g, "");
+    // `.projectignore` (gitignore-style) at the project root: excluded paths are
+    // skipped here, so they never enter `seen` and any previously-indexed ones are
+    // emitted as `sources:removed` below — adding a rule prunes their artifacts.
+    const isIgnored = makeProjectIgnore(
+      await tryReadText(this.filesApi, concatPath(this.project.path, ".projectignore")),
+    );
     const seen = new Set<string>();
     for await (const info of this.filesApi.list(this.project.path, { recursive: true })) {
       if (info.kind !== "file") continue;
@@ -303,6 +310,7 @@ export class ProjectBuilder extends ResourceAdapter {
       if (uri === undefined) continue;
       // Skip dot-segments (system folder `.project/`, manifests, `.git`, …).
       if (uri.split("/").some((seg) => seg.startsWith("."))) continue;
+      if (isIgnored(uri)) continue;
       seen.add(uri);
       const mtime = (info as { lastModified?: number }).lastModified ?? 0;
       const prev = scannerState.get(uri);

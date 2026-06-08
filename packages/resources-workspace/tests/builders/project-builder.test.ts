@@ -141,6 +141,72 @@ describe("ProjectBuilder", () => {
     expect(indexSeen.sort()).toEqual(["index:a.md", "index:notes/b.md"]);
   });
 
+  it("excludes paths matched by .projectignore from scanning", async () => {
+    const filesApi = new MemFilesApi({
+      initialFiles: {
+        "p/keep.md": "# keep",
+        "p/reports/r1.md": "# r1",
+        "p/drafts/d1.md": "# d1",
+        "p/.projectignore": "reports\ndrafts/\n",
+      },
+    });
+    const repo = new ResourceRepository({ filesApi });
+    repo.register("", ContentReadAdapter);
+    repo.register("", ContentWriteAdapter);
+    repo.register("", TextAdapter);
+    repo.register("", Project);
+    repo.register("", ProjectBuilder);
+    repo.register(ResourceRepository, Workspace);
+
+    const project = await repo.requireAdapter<Workspace>(Workspace).getProject("p");
+    const builder = project!.requireAdapter(ProjectBuilder);
+    const seen: string[] = [];
+    builder.registerBuilder(passthrough("extract", "sources", "content", seen));
+    await drain(builder.run());
+
+    expect(seen).toEqual(["extract:keep.md"]); // reports/ and drafts/ excluded
+  });
+
+  it("prunes already-indexed sources when a .projectignore rule is added", async () => {
+    const builder = await openBuilder();
+    const added: string[] = [];
+    const removed: string[] = [];
+    builder.registerBuilder({
+      id: "extract",
+      inputs: ["sources", "sources:removed"],
+      outputs: ["content"],
+      async *handler(project): AsyncGenerator<EmittedUpdate, boolean> {
+        const b = project.requireAdapter(ProjectBuilder);
+        for await (const u of b.readUpdates({ signal: "sources", cell: "extract" })) {
+          added.push(u.uri);
+          yield { signal: "content", uri: u.uri, stamp: u.stamp };
+          await u.handled();
+        }
+        for await (const u of b.readUpdates({ signal: "sources:removed", cell: "extract" })) {
+          removed.push(u.uri);
+          await u.handled();
+        }
+        return true;
+      },
+    });
+
+    await drain(builder.run());
+    expect(added.sort()).toEqual(["a.md", "notes/b.md"]);
+
+    // Add a rule excluding notes/ — the previously-indexed page is now reported removed.
+    const filesApi = (repository as unknown as { filesApi: MemFilesApi }).filesApi;
+    await filesApi.write(
+      "proj/.projectignore",
+      (async function* () {
+        yield new TextEncoder().encode("notes\n");
+      })(),
+    );
+    added.length = 0;
+    await drain(builder.run());
+    expect(added).toEqual([]);
+    expect(removed).toEqual(["notes/b.md"]);
+  });
+
   it("reports pending counts via status before a run and zero after", async () => {
     const builder = await openBuilder();
     builder.registerBuilder(passthrough("extract", "sources", "content", []));
