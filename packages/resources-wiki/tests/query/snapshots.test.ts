@@ -55,4 +55,17 @@ describe("WikiSnapshotsAdapter", () => {
     expect((got?.payload as Answer).text).toBe("first"); // first snapshot unchanged
     expect(got?.kind).toBe("answer");
   });
+
+  it("records an optional label and surfaces it in listing + read-back", async () => {
+    const workspace = repository.requireAdapter<Workspace>(Workspace);
+    const project = await workspace.getProject("proj");
+    if (!project) throw new Error("no project");
+    const snaps = project.requireAdapter(WikiSnapshotsAdapter);
+
+    const id = await snaps.saveAnswer(answer("hi"), "What is X?");
+    const infos = [];
+    for await (const s of snaps.listSnapshots()) infos.push(s);
+    expect(infos.find((s) => s.id === id)?.label).toBe("What is X?");
+    expect((await snaps.getSnapshot(id))?.label).toBe("What is X?");
+  });
 });

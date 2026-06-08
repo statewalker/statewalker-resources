@@ -16,6 +16,8 @@ export interface SnapshotInfo {
   id: string;
   kind: "answer" | "report";
   createdAt: string;
+  /** Human label — the question for an answer, a title for a report. */
+  label?: string;
 }
 export interface Snapshot extends SnapshotInfo {
   payload: unknown;
@@ -59,9 +61,13 @@ export class WikiSnapshotsAdapter extends ResourceAdapter {
     return `${this.now()}__${this.counter++}`;
   }
 
-  private async store(kind: "answer" | "report", payload: unknown): Promise<string> {
+  private async store(
+    kind: "answer" | "report",
+    payload: unknown,
+    label?: string,
+  ): Promise<string> {
     const id = this.newId();
-    const snapshot: Snapshot = { id, kind, createdAt: this.now(), payload };
+    const snapshot: Snapshot = { id, kind, createdAt: this.now(), label, payload };
     await writeJsonAtomic(
       this.filesApi,
       concatPath(this.dir(), `${encodeURIComponent(id)}.json`),
@@ -70,13 +76,13 @@ export class WikiSnapshotsAdapter extends ResourceAdapter {
     return id;
   }
 
-  /** Persist an answer as a frozen snapshot. Returns its id. */
-  saveAnswer(answer: Answer): Promise<string> {
-    return this.store("answer", answer);
+  /** Persist an answer as a frozen snapshot, optionally labelled with its question. Returns its id. */
+  saveAnswer(answer: Answer, label?: string): Promise<string> {
+    return this.store("answer", answer, label);
   }
 
   /** Run each prompt through `WikiQuery` and persist the answers as a report snapshot. */
-  async runReport(spec: ReportSpec): Promise<string> {
+  async runReport(spec: ReportSpec, label?: string): Promise<string> {
     const query = this.project.getAdapter(WikiQuery);
     const answers: Answer[] = [];
     if (query) {
@@ -84,14 +90,15 @@ export class WikiSnapshotsAdapter extends ResourceAdapter {
         answers.push(await query.ask(prompt).complete());
       }
     }
-    return this.store("report", { prompts: spec.prompts, answers });
+    return this.store("report", { prompts: spec.prompts, answers }, label);
   }
 
   async *listSnapshots(): AsyncIterable<SnapshotInfo> {
     for await (const info of this.filesApi.list(this.dir(), { recursive: false })) {
       if (info.kind !== "file" || !info.path.endsWith(".json")) continue;
       const snap = await tryReadJson<Snapshot>(this.filesApi, info.path);
-      if (snap) yield { id: snap.id, kind: snap.kind, createdAt: snap.createdAt };
+      if (snap)
+        yield { id: snap.id, kind: snap.kind, createdAt: snap.createdAt, label: snap.label };
     }
   }
 
