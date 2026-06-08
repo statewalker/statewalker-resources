@@ -177,6 +177,10 @@ export class ProjectBuilder extends ResourceAdapter {
       await new Promise<void>((r) => setTimeout(r, cfg.pauseMs));
     }
     if (cfg.interruptEvery > 0 && this.yieldCounter % cfg.interruptEvery === 0) {
+      // Checkpoint at the cooperative interrupt: the work done so far (handled
+      // updates, scanner mtimes, transaction watermarks) is made durable, so a
+      // build killed here resumes from this point instead of re-running.
+      if (this.stores) await this.flush(this.stores);
       return false;
     }
     return true;
@@ -232,6 +236,10 @@ export class ProjectBuilder extends ResourceAdapter {
           if (stage.type === "begin") {
             yield { type: "begin", transactionId: stage.transactionId };
           } else if (stage.type === "end") {
+            // Persist progress at each committed transaction so an interrupted build
+            // (process kill, timeout) resumes from here rather than re-running — and
+            // re-spending LLM credits — on the already-extracted pages.
+            await this.flush(stores);
             yield { type: "end", transactionId: stage.transactionId };
           } else {
             if (!stage.result) interrupted.add(stage.cellId);

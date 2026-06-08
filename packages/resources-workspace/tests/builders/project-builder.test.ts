@@ -2,6 +2,7 @@ import { MemFilesApi } from "@statewalker/webrun-files-mem";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { EmittedUpdate, RegisteredBuilder } from "../../src/builders/index.js";
 import { ProjectBuilder } from "../../src/builders/index.js";
+import { tryReadJson } from "../../src/builders/json-io.js";
 import {
   ContentReadAdapter,
   ContentWriteAdapter,
@@ -207,6 +208,29 @@ describe("ProjectBuilder", () => {
     expect(removed).toEqual(["notes/b.md"]);
   });
 
+  it("persists scanner/build state at each transaction boundary (resumable after a hard stop)", async () => {
+    const builder = await openBuilder();
+    builder.registerBuilder(passthrough("extract", "sources", "content", []));
+    const filesApi = (repository as unknown as { filesApi: MemFilesApi }).filesApi;
+    const scannerPath = "proj/.project/state/scanner.json";
+
+    // Drive run() manually and STOP at the first committed transaction without
+    // returning the generator — i.e. no `finally`, simulating a process kill.
+    const gen = builder.run();
+    let sawEnd = false;
+    for (let r = await gen.next(); !r.done; r = await gen.next()) {
+      if ((r.value as { type: string }).type === "end") {
+        sawEnd = true;
+        break; // manual break does NOT call gen.return() → finally never runs
+      }
+    }
+    expect(sawEnd).toBe(true);
+
+    // State is already durable on disk (was previously only written in finally).
+    const scanner = await tryReadJson<Record<string, number>>(filesApi, scannerPath);
+    expect(scanner && Object.keys(scanner).sort()).toEqual(["a.md", "notes/b.md"]);
+  });
+
   it("reports pending counts via status before a run and zero after", async () => {
     const builder = await openBuilder();
     builder.registerBuilder(passthrough("extract", "sources", "content", []));
@@ -216,6 +240,47 @@ describe("ProjectBuilder", () => {
     const extract = before.builders.find((b) => b.id === "extract");
     expect(extract?.pending).toBe(0);
     expect(extract?.lastTransaction).toBeGreaterThan(0);
+  });
+
+  it("checkpoints handled progress when yieldControl interrupts (durable mid-build)", async () => {
+    const filesApi = new MemFilesApi({
+      initialFiles: { "p/1.md": "1", "p/2.md": "2", "p/3.md": "3", "p/4.md": "4", "p/5.md": "5" },
+    });
+    const make = () => {
+      const repo = new ResourceRepository({
+        filesApi,
+        builderYield: { interruptEvery: 2, pauseEvery: 0, pauseMs: 0, maxPasses: 100 },
+      });
+      repo.register("", ContentReadAdapter);
+      repo.register("", ContentWriteAdapter);
+      repo.register("", TextAdapter);
+      repo.register("", Project);
+      repo.register("", ProjectBuilder);
+      repo.register(ResourceRepository, Workspace);
+      return repo;
+    };
+
+    const project = await make().requireAdapter<Workspace>(Workspace).getProject("p");
+    const builder = project!.requireAdapter(ProjectBuilder);
+    const seen: string[] = [];
+    builder.registerBuilder(passthrough("extract", "sources", "content", seen));
+
+    // Drive run() and abandon at the first interrupt (yieldControl → false), without
+    // returning the generator (no finally). interruptEvery:2 → 2 items handled.
+    const gen = builder.run();
+    for (let r = await gen.next(); !r.done; r = await gen.next()) {
+      const v = r.value as { type: string; builderId?: string; result?: boolean };
+      if (v.type === "call" && v.builderId === "extract" && v.result === false) break;
+    }
+    expect(seen.length).toBe(2);
+
+    // A fresh ProjectBuilder over the SAME files sees those 2 updates already handled
+    // and flushed — only the remaining 3 are pending (no re-processing on resume).
+    const fresh = (await make().requireAdapter<Workspace>(Workspace).getProject("p"))!;
+    const freshBuilder = fresh.requireAdapter(ProjectBuilder);
+    freshBuilder.registerBuilder(passthrough("extract", "sources", "content", []));
+    const status = await freshBuilder.status();
+    expect(status.builders.find((b) => b.id === "extract")?.pending).toBe(3);
   });
 
   it("converges across yieldControl interrupts, processing every item once", async () => {
