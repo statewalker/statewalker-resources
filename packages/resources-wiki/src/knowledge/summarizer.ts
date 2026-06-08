@@ -10,7 +10,7 @@ import type { DocumentSummary } from "./types.js";
 export const SUMMARIZED_SIGNAL = "summarized";
 
 /** Cell id of the summarizer builder. */
-export const SUMMARIZE_BUILDER_ID = "summarize";
+export const SUMMARIZE_BUILDER_ID = "Summarizer";
 
 export interface KnowledgeBuilderDeps {
   models: LlmModels;

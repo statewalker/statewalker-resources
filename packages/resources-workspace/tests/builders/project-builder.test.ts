@@ -174,7 +174,7 @@ describe("ProjectBuilder", () => {
     const removed: string[] = [];
     builder.registerBuilder({
       id: "extract",
-      inputs: ["sources", "sources:removed"],
+      inputs: ["sources", "sources-removed"],
       outputs: ["content"],
       async *handler(project): AsyncGenerator<EmittedUpdate, boolean> {
         const b = project.requireAdapter(ProjectBuilder);
@@ -183,7 +183,7 @@ describe("ProjectBuilder", () => {
           yield { signal: "content", uri: u.uri, stamp: u.stamp };
           await u.handled();
         }
-        for await (const u of b.readUpdates({ signal: "sources:removed", cell: "extract" })) {
+        for await (const u of b.readUpdates({ signal: "sources-removed", cell: "extract" })) {
           removed.push(u.uri);
           await u.handled();
         }
@@ -274,7 +274,7 @@ describe("ProjectBuilder", () => {
       filesApi,
       "p/.project/state/transactions.json",
     );
-    expect(Object.keys(tx?.cellTransactions ?? {}).sort()).toEqual(["@scan", "extract"]);
+    expect(Object.keys(tx?.cellTransactions ?? {}).sort()).toEqual(["SourceScanner", "extract"]);
   });
 
   it("reports pending counts via status before a run and zero after", async () => {

@@ -25,4 +25,12 @@ export class Project extends ResourceAdapter {
     const resourcePath = this.resolveProjectPath(path);
     return this.repository.getResource(resourcePath, create);
   }
+
+  async requireProjectResource(path: string, create = false): Promise<Resource> {
+    const resource = await this.getProjectResource(path, create);
+    if (!resource) {
+      throw new Error(`Project resource not found: ${this.resolveProjectPath(path)}`);
+    }
+    return resource;
+  }
 }

@@ -9,7 +9,7 @@ import type { DocumentGraph, SectionGraph } from "./types.js";
 
 /** Signal emitted for each page whose graph is available/changed. */
 export const GRAPH_SIGNAL = "graph";
-export const GRAPH_BUILDER_ID = "graph";
+export const GRAPH_BUILDER_ID = "GraphExtractor";
 
 /**
  * Deterministic post-extraction validation: drop any triple whose subject is not

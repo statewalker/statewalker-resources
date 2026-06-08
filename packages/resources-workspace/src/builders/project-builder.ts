@@ -23,10 +23,10 @@ import type {
 import { FileBackedUpdatesStore } from "./updates-store.js";
 
 /** Reserved cell id of the built-in generic source scanner. */
-export const SCAN_CELL = "@scan";
-/** Base signals emitted by the scanner. */
+export const SCAN_CELL = "SourceScanner";
+/** Base signals emitted by the scanner (kebab-case). */
 export const SOURCES_SIGNAL: SignalName = "sources";
-export const SOURCES_REMOVED_SIGNAL: SignalName = "sources:removed";
+export const SOURCES_REMOVED_SIGNAL: SignalName = "sources-removed";
 
 interface Stores {
   updates: FileBackedUpdatesStore;
@@ -68,7 +68,7 @@ export interface YieldConfig {
 const DEFAULT_YIELD_CONFIG: YieldConfig = {
   pauseEvery: 10,
   pauseMs: 10,
-  interruptEvery: 100,
+  interruptEvery: 10,
   maxPasses: 1000,
   flushThrottleMs: 250,
 };
@@ -120,7 +120,11 @@ export class ProjectBuilder extends ResourceAdapter {
   private getGraph(): DataflowGraph {
     if (!this.graph) {
       const defs: CellDefinition[] = [
-        { id: SCAN_CELL, inputs: [], outputs: [SOURCES_SIGNAL, SOURCES_REMOVED_SIGNAL] },
+        {
+          id: SCAN_CELL,
+          inputs: [],
+          outputs: [SOURCES_SIGNAL, SOURCES_REMOVED_SIGNAL],
+        },
         ...[...this.builders.values()].map((b) => ({
           id: b.id,
           inputs: [...b.inputs],
@@ -160,13 +164,22 @@ export class ProjectBuilder extends ResourceAdapter {
   async *readUpdates(opts: { signal: SignalName; cell: string }): AsyncIterable<BuilderUpdate> {
     const { updates } = await this.ensureStores();
     const { signal, cell } = opts;
-    for await (const e of updates.readUpdates({ signal, cell, orderBy: "uri" })) {
+    for await (const e of updates.readUpdates({
+      signal,
+      cell,
+      orderBy: "uri",
+    })) {
       yield {
         signal: e.signal,
         uri: e.uri,
         stamp: e.stamp,
         handled: async () => {
-          await updates.handleUpdate({ signal: e.signal, uri: e.uri, cell, stamp: e.stamp });
+          await updates.handleUpdate({
+            signal: e.signal,
+            uri: e.uri,
+            cell,
+            stamp: e.stamp,
+          });
         },
       };
     }
@@ -217,7 +230,11 @@ export class ProjectBuilder extends ResourceAdapter {
         let res = await gen.next();
         while (!res.done) {
           const u = res.value;
-          await stores.updates.setUpdate({ signal: u.signal, uri: u.uri, stamp: u.stamp });
+          await stores.updates.setUpdate({
+            signal: u.signal,
+            uri: u.uri,
+            stamp: u.stamp,
+          });
           res = await gen.next();
         }
         return res.value !== false;
@@ -316,7 +333,10 @@ export class ProjectBuilder extends ResourceAdapter {
         lastTransaction: await stores.transactions.getCellTransaction(b.id),
       });
     }
-    return { nextTransactionId: stores.transactions.peekNextTransactionId(), builders };
+    return {
+      nextTransactionId: stores.transactions.peekNextTransactionId(),
+      builders,
+    };
   }
 
   /**
@@ -351,7 +371,9 @@ export class ProjectBuilder extends ResourceAdapter {
       await tryReadText(this.filesApi, concatPath(this.project.path, ".projectignore")),
     );
     const seen = new Set<string>();
-    for await (const info of this.filesApi.list(this.project.path, { recursive: true })) {
+    for await (const info of this.filesApi.list(this.project.path, {
+      recursive: true,
+    })) {
       if (info.kind !== "file") continue;
       const uri = this.toProjectUri(info.path, base);
       if (uri === undefined) continue;
@@ -362,12 +384,20 @@ export class ProjectBuilder extends ResourceAdapter {
       const mtime = (info as { lastModified?: number }).lastModified ?? 0;
       const prev = scannerState.get(uri);
       if (prev !== undefined && prev === mtime) continue;
-      await updates.setUpdate({ signal: SOURCES_SIGNAL, uri, stamp: transactionId });
+      await updates.setUpdate({
+        signal: SOURCES_SIGNAL,
+        uri,
+        stamp: transactionId,
+      });
       scannerState.set(uri, mtime);
     }
     for (const uri of [...scannerState.keys()]) {
       if (seen.has(uri)) continue;
-      await updates.setUpdate({ signal: SOURCES_REMOVED_SIGNAL, uri, stamp: transactionId });
+      await updates.setUpdate({
+        signal: SOURCES_REMOVED_SIGNAL,
+        uri,
+        stamp: transactionId,
+      });
       scannerState.delete(uri);
     }
   }

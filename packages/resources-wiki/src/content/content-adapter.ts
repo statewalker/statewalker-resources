@@ -17,7 +17,7 @@ import {
 export const CONTENT_SIGNAL = "content";
 
 /** Cell id of the content-extraction builder. */
-export const CONTENT_BUILDER_ID = "content-extract";
+export const CONTENT_BUILDER_ID = "Extractor";
 
 export interface ContentExtractionOptions {
   /** Maps a resource path to a text extractor. Defaults to `createDefaultRegistry()`. */

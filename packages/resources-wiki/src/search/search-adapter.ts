@@ -241,7 +241,7 @@ export function registerSearch(repository: ResourceRepository, deps: SearchDeps)
 export function searchBuilder(opts: { inputSignal: string }): RegisteredBuilder {
   const { inputSignal } = opts;
   return {
-    id: "search-index",
+    id: "SearchIndexer",
     inputs: [inputSignal, SOURCES_REMOVED_SIGNAL],
     outputs: [],
     // biome-ignore lint/correctness/useYield: maintains an index; emits no signal
@@ -250,7 +250,7 @@ export function searchBuilder(opts: { inputSignal: string }): RegisteredBuilder 
       const search = project.requireAdapter(SearchAdapter);
       for await (const u of builder.readUpdates({
         signal: inputSignal,
-        cell: "search-index",
+        cell: "SearchIndexer",
       })) {
         const resource = await project.getProjectResource(u.uri);
         if (resource) await search.indexPage(resource, u.uri);
@@ -259,7 +259,7 @@ export function searchBuilder(opts: { inputSignal: string }): RegisteredBuilder 
       }
       for await (const u of builder.readUpdates({
         signal: SOURCES_REMOVED_SIGNAL,
-        cell: "search-index",
+        cell: "SearchIndexer",
       })) {
         await search.removePage(u.uri);
         await u.handled();

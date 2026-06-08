@@ -11,8 +11,8 @@ import type { DocumentMeta } from "./types.js";
 /** Signal emitted for each page whose topic/outlier declarations are available/changed. */
 export const META_SIGNAL = "meta";
 /** Tombstone signal: a `<uri>#<topicKey>` declaration was removed (drives the pruner). */
-export const META_REMOVED_TOPICS_SIGNAL = "meta:removed-topics";
-export const META_BUILDER_ID = "meta";
+export const META_REMOVED_TOPICS_SIGNAL = "meta-removed-topics";
+export const META_BUILDER_ID = "MetaExtractor";
 
 /**
  * The meta builder: consumes `summarized`, extracts per-document topic/outlier

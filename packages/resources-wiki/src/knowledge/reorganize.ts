@@ -12,8 +12,8 @@ import { WikiPageMeta } from "./page-adapters.js";
 import { pageDirPath, resourceUri } from "./page-paths.js";
 import type { GlobalOutlier, GlobalTopic } from "./types.js";
 
-export const REORGANIZE_BUILDER_ID = "reorganize";
-export const PRUNE_BUILDER_ID = "prune";
+export const REORGANIZE_BUILDER_ID = "IndexReorganizer";
+export const PRUNE_BUILDER_ID = "IndexPruner";
 
 /** True for a project source resource (not a system-folder/dot-segment artifact). */
 function isSource(uri: string): boolean {

@@ -176,12 +176,12 @@ describe("wiki builders — incremental behaviour", () => {
     expect(await project.requireAdapter(WikiTopicIndex).get("alpha")).toBeUndefined();
   });
 
-  it("restartFrom('summarize') re-triggers but hash-skips unchanged pages (no LLM)", async () => {
+  it("restartFrom('Summarizer') re-triggers but hash-skips unchanged pages (no LLM)", async () => {
     const project = await openProject();
     await scan(project);
 
     const builder = wireWikiProject(project, deps());
-    await builder.restartFrom("summarize");
+    await builder.restartFrom("Summarizer");
     t.calls.length = 0;
     for await (const _ of builder.run()) {
       // drain
@@ -195,7 +195,7 @@ describe("wiki builders — incremental behaviour", () => {
     await scan(project);
 
     const builder = wireWikiProject(project, { ...deps(), force: true });
-    await builder.restartFrom("summarize");
+    await builder.restartFrom("Summarizer");
     t.calls.length = 0;
     for await (const _ of builder.run()) {
       // drain
