@@ -4,6 +4,7 @@ export * from "./content-read-adapter.js";
 export * from "./content-write-adapter.js";
 export * from "./json.js";
 export * from "./json-adapter.js";
+export * from "./logger.js";
 export * from "./output-adapter.js";
 export * from "./repository.js";
 export * from "./repository-adapter.js";

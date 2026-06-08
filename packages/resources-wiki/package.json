@@ -45,6 +45,8 @@
     "@statewalker/indexer-mem-flexsearch": "catalog:",
     "@statewalker/indexer-vector": "catalog:",
     "@statewalker/shared-dataflow": "catalog:",
+    "@statewalker/shared-logger": "catalog:",
+    "@statewalker/shared-logger-pino": "catalog:",
     "@statewalker/webrun-files": "catalog:",
     "@ai-sdk/google": "catalog:",
     "@ai-sdk/openai": "catalog:",

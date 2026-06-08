@@ -18,6 +18,7 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
+      "development": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "import": "./dist/esm/index.js",
       "require": "./dist/cjs/index.cjs"
@@ -37,6 +38,7 @@
   },
   "dependencies": {
     "@statewalker/shared-dataflow": "catalog:",
+    "@statewalker/shared-logger": "catalog:",
     "@statewalker/webrun-files": "catalog:"
   },
   "devDependencies": {

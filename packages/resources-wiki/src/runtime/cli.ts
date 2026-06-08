@@ -1,8 +1,42 @@
 import { createDefaultRegistry } from "@statewalker/content-extractors";
-import { type FilesApi, ResourceRepository, Workspace } from "@statewalker/resources-workspace";
+import {
+  type Adaptable,
+  type FilesApi,
+  LoggerAdapter,
+  type LoggerLevel,
+  ResourceRepository,
+  Workspace,
+} from "@statewalker/resources-workspace";
 import { WikiQuery } from "../query/index.js";
+import { PinoLoggerAdapter } from "./logger.js";
 import { resolveProvidersFromEnv } from "./providers.js";
 import { registerWiki, type WikiDeps, wireWikiProject } from "./register-wiki.js";
+
+const LOG_LEVELS: readonly LoggerLevel[] = ["fatal", "error", "warn", "info", "debug", "trace"];
+
+/**
+ * Pull a `--log-level <level>` / `--log-level=<level>` (or `-l`) flag out of the
+ * argument list. Defaults to `info`; an unknown level falls back to `info`.
+ */
+function extractLogLevel(args: string[]): { level: LoggerLevel; args: string[] } {
+  const coerce = (v: string): LoggerLevel =>
+    LOG_LEVELS.includes(v as LoggerLevel) ? (v as LoggerLevel) : "info";
+  let level: LoggerLevel = "info";
+  const rest: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    const inline = a.match(/^--log-level=(.+)$/);
+    if (inline) {
+      level = coerce(inline[1]);
+    } else if (a === "--log-level" || a === "-l") {
+      const v = args[++i];
+      if (v !== undefined) level = coerce(v);
+    } else {
+      rest.push(a);
+    }
+  }
+  return { level, args: rest };
+}
 
 export interface CliDeps {
   filesApi: FilesApi;
@@ -10,7 +44,8 @@ export interface CliDeps {
   log?: (msg: string) => void;
 }
 
-const USAGE = "usage: wiki <root> <scan|status|query|restart> <project> [question|builder|force]";
+const USAGE =
+  "usage: wiki <root> <scan|status|query|restart> <project> [question|builder|force] [--log-level <fatal|error|warn|info|debug|trace>]";
 
 /**
  * Drive the wiki over a `Workspace`/`Project` for a vault `FilesApi`:
@@ -21,7 +56,9 @@ const USAGE = "usage: wiki <root> <scan|status|query|restart> <project> [questio
  */
 export async function runWikiCli(args: string[], deps: CliDeps): Promise<void> {
   const log = deps.log ?? ((m: string) => process.stdout.write(`${m}\n`));
-  const [command, projectKey, ...rest] = args;
+  // Log level is a CLI flag (default `info`); strip it before positional parsing.
+  const { level: logLevel, args: positional } = extractLogLevel(args);
+  const [command, projectKey, ...rest] = positional;
   if (!command || !projectKey) {
     log(USAGE);
     return;
@@ -35,6 +72,13 @@ export async function runWikiCli(args: string[], deps: CliDeps): Promise<void> {
     force: rest.includes("force"),
   };
   const repository = new ResourceRepository({ filesApi: deps.filesApi });
+  // Stage logging: pino-backed loggers at the chosen level, available to every
+  // resource as `requireAdapter(LoggerAdapter).newLogger(key)`.
+  repository.register(
+    "",
+    LoggerAdapter,
+    (a: Adaptable) => new PinoLoggerAdapter(a, { level: logLevel }),
+  );
   registerWiki(repository, wikiDeps);
   const workspace = repository.requireAdapter<Workspace>(Workspace);
   const project =
