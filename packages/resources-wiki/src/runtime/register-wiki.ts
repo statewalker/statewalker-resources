@@ -45,6 +45,8 @@ export interface WikiDeps {
   corpusPurpose?: string;
   extractors?: ExtractorRegistry;
   clock?: () => string;
+  /** Re-run every build stage even when the source hash is unchanged. */
+  force?: boolean;
 }
 
 /** Wiki search blocks: FTS over each section's raw text, vector over its summary. */
@@ -92,7 +94,12 @@ export function registerWiki(repository: ResourceRepository, deps: WikiDeps): vo
 /** The wiki's builder pipeline, in registration order. */
 export function createWikiBuilders(deps: WikiDeps): RegisteredBuilder[] {
   const llm = deps.llm ?? vercelLlmCaller();
-  const knowledge = { models: deps.models, llm, corpusPurpose: deps.corpusPurpose };
+  const knowledge = {
+    models: deps.models,
+    llm,
+    corpusPurpose: deps.corpusPurpose,
+    force: deps.force,
+  };
   return [
     contentBuilder(),
     summarizeBuilder(knowledge),

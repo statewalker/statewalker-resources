@@ -1,6 +1,6 @@
 import { ProjectBuilder, type RegisteredBuilder } from "@statewalker/resources-workspace";
 import { resolveModel } from "../llm/index.js";
-import { WikiPageGraph, WikiPageSummary } from "./page-adapters.js";
+import { ResourceTextContentCache, WikiPageGraph, WikiPageSummary } from "./page-adapters.js";
 import { fillCorpusPurpose, GRAPH_EXTRACTOR_SYSTEM_PROMPT } from "./prompts.js";
 import { documentGraphSchema, graphExtractorInputSchema } from "./schemas.js";
 import type { KnowledgeBuilderDeps } from "./summarizer.js";
@@ -51,7 +51,10 @@ export function graphBuilder(deps: KnowledgeBuilderDeps): RegisteredBuilder {
       })) {
         const resource = await project.getProjectResource(u.uri);
         const summary = await resource?.requireAdapter(WikiPageSummary).get();
-        if (resource && summary) {
+        const hash = await resource?.requireAdapter(ResourceTextContentCache).getRawMeta();
+        const prior = await resource?.requireAdapter(WikiPageGraph).get();
+        const fresh = !!prior && !!hash && prior.sourceHash === hash.hash;
+        if (resource && summary && (deps.force || !fresh)) {
           const { output } = await deps.llm.generate({
             name: "extract-document-graph",
             description:
@@ -67,6 +70,7 @@ export function graphBuilder(deps: KnowledgeBuilderDeps): RegisteredBuilder {
           const graph: DocumentGraph = {
             uri: u.uri,
             generated: new Date().toISOString(),
+            sourceHash: hash?.hash ?? "",
             sections: filterUnknownSubjects(output.sections),
           };
           await resource.requireAdapter(WikiPageGraph).write(graph);

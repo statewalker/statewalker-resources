@@ -1,9 +1,16 @@
 import { ResourceAdapter, type ResourceRepository } from "@statewalker/resources-workspace";
 import type { FilesApi } from "@statewalker/webrun-files";
 import { ContentAdapter } from "../content/index.js";
+import { hashStream } from "../util/hash.js";
 import { tryReadJson, tryReadText, writeJsonAtomic, writeTextAtomic } from "../util/io.js";
 import { pageArtifactPath } from "./page-paths.js";
-import type { DocumentGraph, DocumentMeta, DocumentSummary, SectionSummary } from "./types.js";
+import type {
+  DocumentGraph,
+  DocumentMeta,
+  DocumentSummary,
+  RawMeta,
+  SectionSummary,
+} from "./types.js";
 
 function filesApiOf(adapter: ResourceAdapter): FilesApi {
   return (adapter.repository as ResourceRepository).filesApi;
@@ -15,23 +22,58 @@ function filesApiOf(adapter: ResourceAdapter): FilesApi {
  * for downstream builders (summarizer, etc.).
  */
 export class ResourceTextContentCache extends ResourceAdapter {
-  private artifactPath(): string {
+  private rawPath(): string {
     return pageArtifactPath(this.resource, "raw.txt");
+  }
+  private metaPath(): string {
+    return pageArtifactPath(this.resource, "raw.meta.json");
+  }
+
+  /** Metadata about the cached raw text — including the source hash. */
+  getRawMeta(): Promise<RawMeta | undefined> {
+    return tryReadJson<RawMeta>(filesApiOf(this), this.metaPath());
+  }
+
+  /** SHA-256 (hex) of the current source bytes, plus the byte count. */
+  private sourceHash(): Promise<{ hash: string; bytes: number }> {
+    return hashStream(filesApiOf(this).read(this.resource.path));
   }
 
   /** Extracted plain text — from cache, or extracted-and-cached on first call. */
   async getTextContent(): Promise<string> {
-    const cached = await tryReadText(filesApiOf(this), this.artifactPath());
+    const cached = await tryReadText(filesApiOf(this), this.rawPath());
     if (cached !== undefined) return cached;
-    return this.refreshTextContent();
+    return (await this.refresh()).text;
   }
 
-  /** Re-extract from source and overwrite the cache. Returns the fresh text. */
-  async refreshTextContent(): Promise<string> {
+  /**
+   * Ensure `raw.txt` + `raw.meta.json` reflect the current source. If the source
+   * hash is unchanged (and the cache is present) the extraction is skipped and the
+   * cached text returned; otherwise the source is re-extracted and both artifacts
+   * rewritten. `force` always re-extracts. `changed` reports whether the source
+   * (by hash) differs from the last cached one.
+   */
+  async refresh(opts: { force?: boolean } = {}): Promise<{
+    text: string;
+    hash: string;
+    changed: boolean;
+  }> {
+    const files = filesApiOf(this);
+    const { hash, bytes } = await this.sourceHash();
+    const prev = await this.getRawMeta();
+    if (!opts.force && prev?.hash === hash) {
+      const cached = await tryReadText(files, this.rawPath());
+      if (cached !== undefined) return { text: cached, hash, changed: false };
+    }
     const content = this.resource.getAdapter(ContentAdapter);
     const text = (await content?.readContent()) ?? "";
-    await writeTextAtomic(filesApiOf(this), this.artifactPath(), text);
-    return text;
+    await writeTextAtomic(files, this.rawPath(), text);
+    await writeJsonAtomic(files, this.metaPath(), {
+      hash,
+      bytes,
+      generated: new Date().toISOString(),
+    } satisfies RawMeta);
+    return { text, hash, changed: prev?.hash !== hash };
   }
 }
 

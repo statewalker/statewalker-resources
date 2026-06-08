@@ -1,7 +1,7 @@
 import { ProjectBuilder, type RegisteredBuilder } from "@statewalker/resources-workspace";
 import { resolveModel } from "../llm/index.js";
 import { collectExistingClasses } from "./indexes.js";
-import { WikiPageMeta, WikiPageSummary } from "./page-adapters.js";
+import { ResourceTextContentCache, WikiPageMeta, WikiPageSummary } from "./page-adapters.js";
 import { fillCorpusPurpose, META_EXTRACTOR_SYSTEM_PROMPT } from "./prompts.js";
 import { documentMetaSchema, metaExtractorInputSchema } from "./schemas.js";
 import type { KnowledgeBuilderDeps } from "./summarizer.js";
@@ -35,9 +35,10 @@ export function metaBuilder(deps: KnowledgeBuilderDeps): RegisteredBuilder {
       })) {
         const resource = await project.getProjectResource(u.uri);
         const summary = await resource?.requireAdapter(WikiPageSummary).get();
-        if (resource && summary) {
-          const prior = await resource.requireAdapter(WikiPageMeta).get();
-
+        const hash = await resource?.requireAdapter(ResourceTextContentCache).getRawMeta();
+        const prior = await resource?.requireAdapter(WikiPageMeta).get();
+        const fresh = !!prior && !!hash && prior.sourceHash === hash.hash;
+        if (resource && summary && (deps.force || !fresh)) {
           const { output } = await deps.llm.generate({
             name: "extract-document-meta",
             description:
@@ -53,6 +54,7 @@ export function metaBuilder(deps: KnowledgeBuilderDeps): RegisteredBuilder {
           const meta: DocumentMeta = {
             uri: u.uri,
             generated: new Date().toISOString(),
+            sourceHash: hash?.hash ?? "",
             topics: output.topics,
             outliers: output.outliers,
           };

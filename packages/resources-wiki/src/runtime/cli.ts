@@ -10,7 +10,7 @@ export interface CliDeps {
   log?: (msg: string) => void;
 }
 
-const USAGE = "usage: wiki <root> <scan|status|query|restart> <project> [question|builder]";
+const USAGE = "usage: wiki <root> <scan|status|query|restart> <project> [question|builder|force]";
 
 /**
  * Drive the wiki over a `Workspace`/`Project` for a vault `FilesApi`:
@@ -28,7 +28,12 @@ export async function runWikiCli(args: string[], deps: CliDeps): Promise<void> {
   }
 
   const providers = resolveProvidersFromEnv(deps.env);
-  const wikiDeps: WikiDeps = { ...providers, extractors: createDefaultRegistry() };
+  // `scan <project> force` re-runs every stage even when the source hash is unchanged.
+  const wikiDeps: WikiDeps = {
+    ...providers,
+    extractors: createDefaultRegistry(),
+    force: rest.includes("force"),
+  };
   const repository = new ResourceRepository({ filesApi: deps.filesApi });
   registerWiki(repository, wikiDeps);
   const workspace = repository.requireAdapter<Workspace>(Workspace);

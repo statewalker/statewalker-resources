@@ -18,6 +18,8 @@ export interface KnowledgeBuilderDeps {
   /** Steers the summariser's level of detail per section. */
   corpusPurpose?: string;
   abortSignal?: AbortSignal;
+  /** Re-run every stage even when the source hash is unchanged. */
+  force?: boolean;
 }
 
 function numberedLines(text: string): Array<[number, string]> {
@@ -42,31 +44,37 @@ export function summarizeBuilder(deps: KnowledgeBuilderDeps): RegisteredBuilder 
         cell: SUMMARIZE_BUILDER_ID,
       })) {
         const resource = await project.getProjectResource(u.uri);
-        // Refresh (re-extract) the raw-text cache: the summarizer only runs when the
-        // source content changed, so the cached raw.txt may be stale.
-        const text = await resource?.requireAdapter(ResourceTextContentCache).refreshTextContent();
-        if (resource && text) {
-          const { output } = await deps.llm.generate({
-            name: "summarize-document",
-            description:
-              "Produce the L2 narrative summary of a single source — title, document summary, and 1–15 section entries each with a kebab-case key and a 0-indexed [startLine, endLine] range.",
-            model: resolveModel(deps.models, "summarize"),
-            system,
-            input: { uri: u.uri, rawLines: numberedLines(text) },
-            inputSchema: summarizerInputSchema,
-            outputSchema: documentSummarySchema,
-            abortSignal: deps.abortSignal,
-          });
+        if (resource) {
+          // Materialise raw.txt + raw.meta.json and learn the current source hash.
+          const { text, hash } = await resource
+            .requireAdapter(ResourceTextContentCache)
+            .refresh({ force: deps.force });
+          const existing = await resource.requireAdapter(WikiPageSummary).get();
+          // Skip the (costly) summarization LLM call when the source is unchanged.
+          if (text && (deps.force || existing?.sourceHash !== hash)) {
+            const { output } = await deps.llm.generate({
+              name: "summarize-document",
+              description:
+                "Produce the L2 narrative summary of a single source — title, document summary, and 1–15 section entries each with a kebab-case key and a 0-indexed [startLine, endLine] range.",
+              model: resolveModel(deps.models, "summarize"),
+              system,
+              input: { uri: u.uri, rawLines: numberedLines(text) },
+              inputSchema: summarizerInputSchema,
+              outputSchema: documentSummarySchema,
+              abortSignal: deps.abortSignal,
+            });
 
-          const summary: DocumentSummary = {
-            uri: u.uri,
-            generated: new Date().toISOString(),
-            title: output.title,
-            summary: output.summary,
-            sections: output.sections,
-          };
-          await resource.requireAdapter(WikiPageSummary).write(summary);
-          yield { signal: SUMMARIZED_SIGNAL, uri: u.uri, stamp: u.stamp };
+            const summary: DocumentSummary = {
+              uri: u.uri,
+              generated: new Date().toISOString(),
+              sourceHash: hash,
+              title: output.title,
+              summary: output.summary,
+              sections: output.sections,
+            };
+            await resource.requireAdapter(WikiPageSummary).write(summary);
+            yield { signal: SUMMARIZED_SIGNAL, uri: u.uri, stamp: u.stamp };
+          }
         }
         await u.handled();
         if (!(await builder.yieldControl())) return false;

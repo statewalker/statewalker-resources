@@ -32,7 +32,7 @@ export function resolveProvidersFromEnv(
       apiKey: required(env, "GOOGLE_GENERATIVE_AI_API_KEY"),
     });
     const embedModel = env.WIKI_EMBED_MODEL ?? "text-embedding-004";
-    const model = google.textEmbeddingModel(embedModel);
+    const model = google.embeddingModel(embedModel);
     return {
       models: { default: google(env.WIKI_MODEL ?? "gemini-2.5-flash") },
       embed: async (text) => new Float32Array((await aiEmbed({ model, value: text })).embedding),
@@ -42,7 +42,7 @@ export function resolveProvidersFromEnv(
   }
   const openai = createOpenAI({ apiKey: required(env, "OPENAI_API_KEY") });
   const embedModel = env.WIKI_EMBED_MODEL ?? "text-embedding-3-small";
-  const model = openai.textEmbeddingModel(embedModel);
+  const model = openai.embeddingModel(embedModel);
   return {
     models: { default: openai(env.WIKI_MODEL ?? "gpt-4.1-mini") },
     embed: async (text) => new Float32Array((await aiEmbed({ model, value: text })).embedding),

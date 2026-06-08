@@ -1,3 +1,18 @@
+// ── Raw text cache metadata (ContentCache) ─────────────────────────────────
+
+/**
+ * Metadata about a page's cached raw text (`raw.txt`). Its `hash` is the SHA-256
+ * of the original source bytes; the build stages compare it against the
+ * `sourceHash` they recorded to skip re-running on unchanged sources.
+ */
+export interface RawMeta {
+  /** SHA-256 (hex) of the original source bytes. */
+  hash: string;
+  /** Source size in bytes. */
+  bytes: number;
+  generated: string;
+}
+
 // ── L2 narrative summary (Summarizer) ──────────────────────────────────────
 
 /** One L2 section: a contiguous range of raw lines summarised as prose. */
@@ -16,6 +31,8 @@ export interface SectionSummary {
 export interface DocumentSummary {
   uri: string;
   generated: string;
+  /** SHA-256 of the source this summary was derived from (see {@link RawMeta}). */
+  sourceHash: string;
   title: string;
   /** Document-level abstract (1–3 sentences). */
   summary: string;
@@ -49,6 +66,8 @@ export interface DocumentOutlier {
 export interface DocumentMeta {
   uri: string;
   generated: string;
+  /** SHA-256 of the source this meta was derived from (see {@link RawMeta}). */
+  sourceHash: string;
   topics: DocumentTopic[];
   outliers: DocumentOutlier[];
 }
@@ -77,6 +96,8 @@ export interface SectionGraph {
 export interface DocumentGraph {
   uri: string;
   generated: string;
+  /** SHA-256 of the source this graph was derived from (see {@link RawMeta}). */
+  sourceHash: string;
   sections: SectionGraph[];
 }
 

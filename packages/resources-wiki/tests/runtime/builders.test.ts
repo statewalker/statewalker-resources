@@ -6,6 +6,7 @@ import {
   type DocumentMetaOutput,
   type LlmCaller,
   type LlmModels,
+  ResourceTextContentCache,
   registerWiki,
   WikiPageGraph,
   WikiPageMeta,
@@ -175,7 +176,7 @@ describe("wiki builders — incremental behaviour", () => {
     expect(await project.requireAdapter(WikiTopicIndex).get("alpha")).toBeUndefined();
   });
 
-  it("restartFrom('summarize') re-derives the page summary downstream", async () => {
+  it("restartFrom('summarize') re-triggers but hash-skips unchanged pages (no LLM)", async () => {
     const project = await openProject();
     await scan(project);
 
@@ -185,12 +186,47 @@ describe("wiki builders — incremental behaviour", () => {
     for await (const _ of builder.run()) {
       // drain
     }
-    // Summarizer (and the meta/graph/search downstream) re-ran for both pages.
+    // Re-triggered, but the source hash is unchanged → the summarizer does no work.
+    expect(t.calls.filter((c) => c.name === "summarize-document")).toEqual([]);
+  });
+
+  it("force re-derives every page even when the source hash is unchanged", async () => {
+    const project = await openProject();
+    await scan(project);
+
+    const builder = wireWikiProject(project, { ...deps(), force: true });
+    await builder.restartFrom("summarize");
+    t.calls.length = 0;
+    for await (const _ of builder.run()) {
+      // drain
+    }
     expect(
       t.calls
         .filter((c) => c.name === "summarize-document")
         .map((c) => c.uri)
         .sort(),
     ).toEqual(["a.md", "b.md"]);
+  });
+
+  it("skips re-summarization when content is unchanged despite a new mtime (hash-gated)", async () => {
+    const project = await openProject();
+    await scan(project);
+    t.calls.length = 0;
+    // Rewrite a.md with IDENTICAL content → new mtime, same source hash.
+    await writeFile(filesApi, "proj/a.md", "Acme.");
+    await scan(project);
+    expect(t.calls.filter((c) => c.name === "summarize-document")).toEqual([]);
+  });
+
+  it("records the source hash in raw.meta.json and stamps it onto the page artifacts", async () => {
+    const project = await openProject();
+    await scan(project);
+    const resource = await project.getProjectResource("a.md");
+    if (!resource) throw new Error("no resource");
+    const rawMeta = await resource.requireAdapter(ResourceTextContentCache).getRawMeta();
+    expect(rawMeta?.hash).toMatch(/^[0-9a-f]{64}$/);
+    expect((await resource.requireAdapter(WikiPageSummary).get())?.sourceHash).toBe(rawMeta?.hash);
+    expect((await resource.requireAdapter(WikiPageMeta).get())?.sourceHash).toBe(rawMeta?.hash);
+    expect((await resource.requireAdapter(WikiPageGraph).get())?.sourceHash).toBe(rawMeta?.hash);
   });
 });
