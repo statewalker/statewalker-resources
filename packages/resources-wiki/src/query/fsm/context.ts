@@ -38,6 +38,24 @@ export interface Summary {
   refs: string[];
 }
 
+/** One subject's relevant evidence sections, document-ordered, after the section filter. */
+export interface SubjectGroup {
+  /** The subject prompt this group serves (steers its rolling summary). */
+  prompt: string;
+  sections: EvidenceSection[];
+}
+
+/**
+ * A retrieved section before the relevance filter: the resolved evidence plus its
+ * retrieval signal — `score` (how many front-ends surfaced it: 1, or 2 when both
+ * hybrid search AND the topic ladder did) and the subject indices it served.
+ */
+export interface Candidate {
+  section: EvidenceSection;
+  score: number;
+  subjects: number[];
+}
+
 // ── injected once at launch (get throws if unset — no create factory) ──
 export const [getProject, setProject] = newAdapter<Project>("wiki:project");
 export const [getLlm, setLlm] = newAdapter<LlmApi>("wiki:llm");
@@ -47,8 +65,14 @@ export const [getProgress, setProgress] = newAdapter<QueryProgress>("wiki:progre
 
 // ── produced by a stage, consumed by later stages (set before yield) ──
 export const [getIntent, setIntent] = newAdapter<IntentResult>("wiki:intent");
-/** The merged, deduplicated evidence pool (set by Retrieve, ordered by ChapterPlan). */
+/** The deduped, scored candidate pool (set by Retrieve; consumed by SelectSections). */
+export const [getCandidates, setCandidates] = newAdapter<Candidate[]>("wiki:candidates");
+/** Next score-tier index SelectSections will consume (0 = both front-ends, then 1 = the rest). */
+export const [getTier, setTier] = newAdapter<number>("wiki:tier");
+/** The selected-section union so far, accumulated across tiers (drives topics + citation verify). */
 export const [getEvidence, setEvidence] = newAdapter<EvidenceSection[]>("wiki:evidence");
+/** THIS tier's newly-selected sections grouped by subject (set by SelectSections; folded by Summarize). */
+export const [getGroups, setGroups] = newAdapter<SubjectGroup[]>("wiki:groups");
 export const [getSummaries, setSummaries] = newAdapter<Summary[]>("wiki:summaries");
 export const [getAnswer, setAnswer] = newAdapter<Answer>("wiki:answer");
 

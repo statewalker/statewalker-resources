@@ -49,6 +49,7 @@
     "@statewalker/shared-logger": "catalog:",
     "@statewalker/shared-logger-pino": "catalog:",
     "@statewalker/webrun-files": "catalog:",
+    "@uwdata/flechette": "catalog:",
     "@ai-sdk/google": "catalog:",
     "@ai-sdk/openai": "catalog:",
     "ai": "catalog:",

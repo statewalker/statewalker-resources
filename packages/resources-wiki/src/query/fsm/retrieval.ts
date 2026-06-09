@@ -226,3 +226,49 @@ export function renderFoldSection(input: {
   parts.push(`<raw_content>\n${input.raw}\n</raw_content>`);
   return parts.join("\n");
 }
+
+/** A candidate section as offered to the relevance filter (no raw content — title + summary only). */
+export interface FilterSection {
+  /** The section URI (`<docUri>#<sectionKey>`) the filter echoes back when it keeps the section. */
+  uri: string;
+  docUri: string;
+  docTitle: string;
+  title: string;
+  summary: string;
+}
+
+/** One document's slice of a filter batch: its title plus the candidate sections in that batch. */
+export interface FilterDoc {
+  docUri: string;
+  title: string;
+  sections: { uri: string; title: string; summary: string }[];
+}
+
+/**
+ * Pack doc-grouped candidate sections into batches whose combined size stays under
+ * `charBudget` (a token-window proxy at ~4 chars/token). Sections are consumed in the
+ * given order, so order by score/document upstream; a document spanning a batch
+ * boundary simply repeats its title in each batch.
+ */
+export function packFilterBatches(sections: FilterSection[], charBudget: number): FilterDoc[][] {
+  const batches: FilterDoc[][] = [];
+  let cur = new Map<string, FilterDoc>();
+  let size = 0;
+  const flush = () => {
+    if (cur.size > 0) {
+      batches.push([...cur.values()]);
+      cur = new Map();
+      size = 0;
+    }
+  };
+  for (const s of sections) {
+    const cost = s.uri.length + s.title.length + s.summary.length + 16;
+    if (size > 0 && size + cost > charBudget) flush();
+    const doc = cur.get(s.docUri) ?? { docUri: s.docUri, title: s.docTitle, sections: [] };
+    doc.sections.push({ uri: s.uri, title: s.title, summary: s.summary });
+    cur.set(s.docUri, doc);
+    size += cost;
+  }
+  flush();
+  return batches;
+}

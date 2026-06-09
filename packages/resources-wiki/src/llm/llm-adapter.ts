@@ -4,7 +4,9 @@ import {
   embedMany as aiEmbedMany,
   generateText,
   type LanguageModel,
+  NoObjectGeneratedError,
   Output,
+  streamObject,
   streamText,
 } from "ai";
 import type { z } from "zod";
@@ -41,6 +43,12 @@ export interface GenerateObjectSpec<TInput, TOutput> {
   outputSchema: z.ZodType<TOutput>;
   abortSignal?: AbortSignal;
   maxOutputTokens?: number;
+  /** Enforce OpenAI strict structured outputs (provider guarantees schema shape). Requires a
+   * strict-compatible schema: every property required + nullable instead of optional. */
+  strict?: boolean;
+  /** When set, the object is streamed and this is called with each partial object as it builds;
+   * the resolved final object is still returned. Lets a stage render progressive output. */
+  onPartial?: (partial: unknown) => void;
 }
 
 /** Free-form text generation call (used by `generateText` / `streamText`). */
@@ -94,19 +102,62 @@ export class LlmProjectAdapter implements LlmApi {
   ): Promise<{ output: TOutput; usage: LlmCallUsage }> {
     const parsedInput = spec.inputSchema.parse(spec.input);
     const prompt = `Call: ${spec.name}\n\nInput (JSON):\n${JSON.stringify(parsedInput, null, 2)}`;
-    const result = await generateText({
-      model: this.provider.languageModel(spec.model),
-      system: spec.system,
-      prompt,
-      output: Output.object({
+    const providerOptions = { openai: { strictJsonSchema: spec.strict ?? false } };
+
+    // Streaming path: emit each partial object as it builds, return the final object.
+    if (spec.onPartial) {
+      const onPartial = spec.onPartial;
+      const stream = streamObject({
+        model: this.provider.languageModel(spec.model),
+        system: spec.system,
+        prompt,
         schema: spec.outputSchema,
-        name: spec.name,
-        description: spec.description,
-      }),
-      maxOutputTokens: spec.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
-      abortSignal: spec.abortSignal,
-      providerOptions: { openai: { strictJsonSchema: false } },
-    });
+        schemaName: spec.name,
+        schemaDescription: spec.description,
+        maxOutputTokens: spec.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+        abortSignal: spec.abortSignal,
+        providerOptions,
+      });
+      for await (const partial of stream.partialObjectStream) onPartial(partial);
+      return {
+        output: (await stream.object) as TOutput,
+        usage: normalizeUsage(await stream.usage),
+      };
+    }
+
+    const call = () =>
+      generateText({
+        model: this.provider.languageModel(spec.model),
+        system: spec.system,
+        prompt,
+        output: Output.object({
+          schema: spec.outputSchema,
+          name: spec.name,
+          description: spec.description,
+        }),
+        maxOutputTokens: spec.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+        abortSignal: spec.abortSignal,
+        providerOptions,
+      });
+    // Structured-output deviations ("response did not match schema") are usually
+    // transient model wobble — retry once, then surface the raw output for debugging.
+    let result: Awaited<ReturnType<typeof call>>;
+    try {
+      result = await call();
+    } catch (error) {
+      if (!NoObjectGeneratedError.isInstance(error)) throw error;
+      try {
+        result = await call();
+      } catch (retryError) {
+        if (!NoObjectGeneratedError.isInstance(retryError)) throw retryError;
+        const text =
+          typeof retryError.text === "string" ? retryError.text.slice(0, 800) : undefined;
+        throw new Error(
+          `generateObject(${spec.name}) did not match schema (finishReason=${retryError.finishReason}); output: ${text}`,
+          { cause: retryError },
+        );
+      }
+    }
     return {
       output: result.output as TOutput,
       usage: normalizeUsage(result.usage as { inputTokens?: number; outputTokens?: number }),

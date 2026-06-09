@@ -71,6 +71,8 @@ let intent: Intent;
 let selectedTopicKeys: ((available: string[]) => string[]) | undefined;
 let calls: Record<string, number>;
 let foldSections: string[];
+/** Compose reports "sufficient" only after this many compose calls (0 = always sufficient). */
+let sufficientAfter: number;
 
 const generateObject: LlmApi["generateObject"] = async (spec) => {
   const usage = { inputTokens: 0, outputTokens: 0 };
@@ -95,23 +97,29 @@ const generateObject: LlmApi["generateObject"] = async (spec) => {
         outlierKeys,
       });
     }
-    case "doc-topic-select":
-      return out({
-        selected: (spec.input as { candidates: { uri: string }[] }).candidates.map((c) => c.uri),
-      });
-    case "summarize-fold": {
-      const section = (spec.input as { section: string }).section;
-      foldSections.push(section);
-      const prev = section.match(/<previous_summary>\n([\s\S]*?)\n<\/previous_summary>/)?.[1] ?? "";
-      const marker = section.match(MARKER_RE)?.[0] ?? "";
-      return out({ text: `${prev} fact ${marker}`.trim() });
+    case "section-select": {
+      // Keep every candidate section in the batch.
+      const docs = (spec.input as { documents: { sections: { uri: string }[] }[] }).documents;
+      return out({ relevantUris: docs.flatMap((d) => d.sections.map((s) => s.uri)) });
+    }
+    case "summarize-batch": {
+      const sections = (spec.input as { sections: string }).sections;
+      foldSections.push(sections);
+      // Keep every marker in the batch so citations propagate to compose.
+      const markers = [...sections.matchAll(MARKER_RE)].map((m) => m[0]).join(" ");
+      return out({ text: `facts ${markers}`.trim() });
     }
     case "compose-answer": {
       const text = (spec.input as { summaries: { text: string }[] }).summaries
         .map((s) => s.text)
         .join(" ");
-      const citations = [...text.matchAll(MARKER_RE)].map((m) => m[1]);
-      return out({ text, citations, suggestions: [] });
+      // One grounded claim per marker found in the summaries' text.
+      const claims = [...text.matchAll(MARKER_RE)].map((m) => ({
+        statement: "fact",
+        citations: [m[1]],
+      }));
+      const sufficient = (calls["compose-answer"] ?? 0) > sufficientAfter;
+      return out({ claims, suggestions: [], sufficient, missing: sufficient ? null : "more" });
     }
     default:
       throw new Error(`unexpected call ${spec.name}`);
@@ -170,6 +178,7 @@ describe("WikiQuery — FSM-driven retrieval", () => {
     selectedTopicKeys = undefined;
     calls = {};
     foldSections = [];
+    sufficientAfter = 0;
     project = await buildProject();
   });
 
@@ -190,27 +199,41 @@ describe("WikiQuery — FSM-driven retrieval", () => {
     expect(new Set(keys).size).toBe(keys.length); // no duplicates
   });
 
-  it("fans retrieval out per subject (handler-internal)", async () => {
+  it("fans retrieval out per subject, then filters sections once globally", async () => {
     intent = {
       onCorpus: true,
       subjects: [{ prompt: "Who founded Acme?" }, { prompt: "What is Acme?" }],
     };
     await project.requireAdapter(WikiQuery).ask("Acme + founders").complete();
-    // The class ladder runs once per subject.
+    // The class ladder runs once per subject; the relevance filter runs once over the pool.
     expect(calls["topic-select"]).toBe(2);
-    expect(calls["doc-topic-select"]).toBe(2);
+    expect(calls["section-select"]).toBe(1);
   });
 
-  it("the rolling-summarize fold exposes the four XML tags; the first omits previous_summary", async () => {
+  it("escalates to the next tier when the first answer reports missing information", async () => {
+    // First compose reports insufficient → escalate; second is sufficient.
+    sufficientAfter = 1;
+    const answer = await project.requireAdapter(WikiQuery).ask("Who founded Acme?").complete();
+    // Two filter passes (intersection tier, then the remainder) and two compose attempts.
+    expect(calls["section-select"]).toBe(2);
+    expect(calls["compose-answer"]).toBe(2);
+    // Evidence accumulated across both tiers: the score-2 `founders` and the score-1 `intro`.
+    const keys = answer.citations;
+    expect(answer.evidenceCount).toBe(2);
+    expect(keys.some((c) => c.includes("#founders"))).toBe(true);
+    expect(keys.some((c) => c.includes("#intro"))).toBe(true);
+  });
+
+  it("summarizes in batches exposing the section XML tags, with no rolling state", async () => {
     await project.requireAdapter(WikiQuery).ask("Who founded Acme?").complete();
     expect(foldSections.length).toBeGreaterThan(0);
-    for (const section of foldSections) {
-      expect(section).toContain("<section_title");
-      expect(section).toContain("<section_description>");
-      expect(section).toContain("<raw_content>");
+    for (const batch of foldSections) {
+      expect(batch).toContain("<section_title");
+      expect(batch).toContain("<section_description>");
+      expect(batch).toContain("<raw_content>");
+      // Batch summarization is stateless — no carried-over rolling summary.
+      expect(batch).not.toContain("<previous_summary>");
     }
-    expect(foldSections[0]).not.toContain("<previous_summary>");
-    if (foldSections.length > 1) expect(foldSections[1]).toContain("<previous_summary>");
   });
 
   it("grounds every surviving citation in a retrieved section", async () => {

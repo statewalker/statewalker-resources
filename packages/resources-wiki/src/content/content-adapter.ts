@@ -84,9 +84,7 @@ export function registerContentExtraction(
   return repository.register("", ContentAdapter, (adaptable: Adaptable) => {
     const resource = adaptable as Resource;
     const extractor = registry.get(resource.url) ?? fallback;
-    return extractor
-      ? new ContentAdapter(resource, { registry, fallback })
-      : null;
+    return extractor ? new ContentAdapter(resource, { registry, fallback }) : null;
   });
 }
 
@@ -107,8 +105,7 @@ export function contentBuilder(): RegisteredBuilder {
         cell: CONTENT_BUILDER_ID,
       });
       for await (const batch of toBatch(source, CONTENT_BATCH_SIZE)) {
-        for (const emitted of await Promise.all(batch.map(handleEntry)))
-          yield* emitted;
+        for (const emitted of await Promise.all(batch.map(handleEntry))) yield* emitted;
         if (!(await builder.yieldControl())) return false;
       }
       return true;

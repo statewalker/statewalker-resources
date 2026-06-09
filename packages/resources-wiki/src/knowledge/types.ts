@@ -40,6 +40,30 @@ export interface DocumentSummary {
   sections: SectionSummary[];
 }
 
+// ── Section embeddings (Embedder) ──────────────────────────────────────────
+
+/**
+ * Metadata for a document's per-section embeddings, stored beside the page
+ * artifacts as `embeddings.<model>.<dim>.json`. The model + dimensionality are
+ * part of the filename so switching embedding models never collides with a stale
+ * file. The dense vectors themselves live in the sibling Arrow file
+ * `embeddings.<model>.<dim>.arrow` (a `FixedSizeList<Float32>[dimensionality]`
+ * column) — text-encoding float arrays in JSON is far too large. Row `i` of the
+ * Arrow file corresponds to `sections[i]`.
+ */
+export interface DocumentEmbeddings {
+  uri: string;
+  generated: string;
+  /** SHA-256 of the source these embeddings were derived from (see {@link RawMeta}). */
+  sourceHash: string;
+  /** Embedding model id these vectors were produced with. */
+  model: string;
+  /** Vector dimensionality. */
+  dimensionality: number;
+  /** Section keys, in the same row order as the vectors in the Arrow sidecar. */
+  sections: string[];
+}
+
 // ── L2.5 topic / outlier declarations (MetaExtractor) ───────────────────────
 
 export interface DocumentTopic {

@@ -36,6 +36,8 @@ export interface Answer {
 export class QueryProgress {
   stages: { name: string; status: "running" | "done" | "failed" }[] = [];
   evidence: EvidenceSection[] = [];
+  /** The answer text as it streams from the Respond stage (reset when the run escalates). */
+  partialText = "";
   answer?: Answer;
   error?: unknown;
   private resolvers: ((a: Answer) => void)[] = [];
@@ -55,6 +57,11 @@ export class QueryProgress {
 
   stage(name: string): void {
     this.stages.push({ name, status: "running" });
+    this.emit();
+  }
+  /** Update the streaming answer text (or reset to "" when a run escalates). Notifies listeners. */
+  setPartialText(text: string): void {
+    this.partialText = text;
     this.emit();
   }
   /** Mark the current (last) stage `done` — called by the `load` instrumentation on state exit. */

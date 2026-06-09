@@ -76,25 +76,27 @@ const generateObject: LlmApi["generateObject"] = async (spec) => {
         outlierKeys: input.availableOutliers.map((o) => o.key),
       });
     }
-    case "doc-topic-select": {
-      // Recall-first: keep every candidate.
-      const input = spec.input as { candidates: { uri: string }[] };
-      return out({ selected: input.candidates.map((c) => c.uri) });
+    case "section-select": {
+      // Keep every candidate section in the batch.
+      const docs = (spec.input as { documents: { sections: { uri: string }[] }[] }).documents;
+      return out({ relevantUris: docs.flatMap((d) => d.sections.map((s) => s.uri)) });
     }
-    case "summarize-fold": {
-      // Carry the section's marker forward into the rolling summary.
-      const section = (spec.input as { section: string }).section;
-      const prev = section.match(/<previous_summary>\n([\s\S]*?)\n<\/previous_summary>/)?.[1] ?? "";
-      const marker = section.match(MARKER_RE)?.[0] ?? "";
-      return out({ text: `${prev} Acme is a company. ${marker}`.trim() });
+    case "summarize-batch": {
+      // Carry every marker in the batch into the summary so citations propagate.
+      const sections = (spec.input as { sections: string }).sections;
+      const markers = [...sections.matchAll(MARKER_RE)].map((m) => m[0]).join(" ");
+      return out({ text: `Acme is a company. ${markers}`.trim() });
     }
     case "compose-answer": {
-      // Cite whatever markers the rolling summaries carried.
+      // One grounded claim per marker the rolling summaries carried.
       const text = (spec.input as { summaries: { text: string }[] }).summaries
         .map((s) => s.text)
         .join(" ");
-      const citations = [...text.matchAll(MARKER_RE)].map((m) => m[1]);
-      return out({ text, citations, suggestions: [] });
+      const claims = [...text.matchAll(MARKER_RE)].map((m) => ({
+        statement: "Acme is a company.",
+        citations: [m[1]],
+      }));
+      return out({ claims, suggestions: [], sufficient: true, missing: null });
     }
     default:
       throw new Error(`unexpected ${spec.name}`);

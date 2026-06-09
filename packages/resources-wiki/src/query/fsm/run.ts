@@ -1,5 +1,5 @@
 import { startProcess } from "@statewalker/fsm";
-import type { Project } from "@statewalker/resources-workspace";
+import { loggerOf, type Project } from "@statewalker/resources-workspace";
 import { llmOf, wikiConfigOf } from "../../llm/index.js";
 import { QueryProgress } from "../progress.js";
 import { setConfig, setLlm, setProgress, setProject, setRequest } from "./context.js";
@@ -16,12 +16,23 @@ import { type Ctx, QUERY_FSM } from "./query-fsm.js";
  */
 export function runQuery(project: Project, question: string): QueryProgress {
   const progress = new QueryProgress();
+  const log = loggerOf(project, "QueryFsm");
   const ctx: Ctx = {};
   setProject(ctx, project);
   setLlm(ctx, llmOf(project));
   setConfig(ctx, wikiConfigOf(project));
   setRequest(ctx, { question });
   setProgress(ctx, progress);
-  startProcess(ctx, QUERY_FSM, load, "").catch((err) => progress._fail(err));
+  log.info("query start", { question });
+  // Trace every state entry (and the event that drove it) so a stall is visible —
+  // the last logged state is where the pipeline is stuck.
+  const tracedLoad = (state: string, event: string | undefined) => {
+    log.info("query state", { state, event });
+    return load(state);
+  };
+  startProcess(ctx, QUERY_FSM, tracedLoad, "").catch((err) => {
+    log.error("query failed", { error: err instanceof Error ? err.message : String(err) });
+    progress._fail(err);
+  });
   return progress;
 }

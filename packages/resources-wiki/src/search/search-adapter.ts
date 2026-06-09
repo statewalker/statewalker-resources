@@ -1,4 +1,10 @@
-import type { DocumentPath, EmbedFn, Index, SearchRequest } from "@statewalker/indexer-api";
+import type {
+  DocumentPath,
+  EmbedFn,
+  Index,
+  Indexer,
+  SearchRequest,
+} from "@statewalker/indexer-api";
 import {
   type FullTextBlock,
   type FulltextQuery,
@@ -18,19 +24,25 @@ import {
   SOURCES_REMOVED_SIGNAL,
 } from "@statewalker/resources-workspace";
 import { writeJsonAtomic } from "../util/io.js";
+import { FilesIndexerPersistence } from "./files-persistence.js";
 
 const FTS_SUB = "fts";
 const VEC_SUB = "vec";
 const DEFAULT_SYSTEM_FOLDER = ".project";
+const INDEX_NAME = "wiki-search";
+/** Persist the index at most once per this interval while indexing. */
+const SAVE_THROTTLE_MS = 2000;
 
 const ftsAccess = newFullTextAccess(FTS_SUB);
 const vecAccess = newVectorAccess(VEC_SUB);
 
-/** A unit of indexable content: full-text `text` and optional `vectorText` to embed. */
+/** A unit of indexable content: full-text `text` plus an optional precomputed `embedding`. */
 export interface SearchBlock {
   blockId: string;
+  /** Full-text content (e.g. section summary + raw section text). */
   text: string;
-  vectorText?: string;
+  /** Precomputed section embedding (from the Embedder stage); vector-skipped if absent. */
+  embedding?: Float32Array;
 }
 
 /** Maps a source resource (and its project-relative uri) to its indexable blocks. */
@@ -66,31 +78,25 @@ function fromDocumentPath(path: string): string {
   return path.replace(/^\/+/, "");
 }
 
-/** Project-relative uri of a resource (path minus the leading project segment). */
-function projectRelative(resource: Resource, projectPath: string): string {
-  const base = projectPath.replace(/^\/+|\/+$/g, "");
-  const p = resource.path.replace(/^\/+/, "");
-  if (base === "") return p;
-  return p.startsWith(`${base}/`) ? p.slice(base.length + 1) : "";
-}
-
-function isSource(uri: string): boolean {
-  return uri.length > 0 && !uri.split("/").some((seg) => seg.startsWith("."));
-}
-
 /**
  * Project-level hybrid (full-text + vector) search over a project's indexable
- * blocks. Wiki-free by contract: it references no wiki types — content is supplied
- * through an injected `SearchBlocksProvider` and an `EmbedFn`, so it can be lifted
- * to a standalone `resources-search` package unchanged.
+ * blocks. Wiki-free by contract: it references no wiki types — content (and its
+ * precomputed embeddings) is supplied through an injected `SearchBlocksProvider`,
+ * so it can be lifted to a standalone `resources-search` package unchanged.
  *
- * The index is held in memory and rebuilt from the project's blocks on first use
- * when empty (the persisted FTS+vector backend is a deferred decision); the model
- * and dimensionality are recorded in `<project>/<systemFolder>/index/search.json`.
+ * The index is persisted under `<project>/<systemFolder>/index/search/` and
+ * updated incrementally during indexing (throttled serialization). On search it
+ * is loaded into memory and used as-is — no rebuild, no query-time corpus
+ * embedding. The model + dimensionality are recorded in `index/search.json`.
  */
 export class SearchAdapter extends ResourceAdapter {
-  private index?: Index;
-  private built = false;
+  private indexer?: Indexer;
+  /** Memoised index init: shared by concurrent callers so the open runs exactly once. */
+  private indexReady?: Promise<Index>;
+  /** Whether the in-memory index has unsaved changes (drives throttled persistence). */
+  private dirty = false;
+  /** Timestamp (ms) of the last persistence flush. */
+  private lastSaveAt = 0;
 
   private get opts(): AdapterOptions {
     return this.options as AdapterOptions;
@@ -104,33 +110,75 @@ export class SearchAdapter extends ResourceAdapter {
   private get projectPath(): string {
     return this.resource.path.replace(/^\/+|\/+$/g, "");
   }
+  private indexDir(): string {
+    return concatPath(this.projectPath, this.systemFolder, "index");
+  }
   private configPath(): string {
-    return concatPath(this.projectPath, this.systemFolder, "index", "search.json");
+    return concatPath(this.indexDir(), "search.json");
   }
 
-  private async ensureIndex(): Promise<Index> {
-    if (!this.index) {
-      const indexer = createFlexSearchIndexer();
-      this.index = await indexer.createIndex({
-        name: "wiki-search",
-        subIndexes: {
-          [FTS_SUB]: { type: "fulltext", language: "en" },
-          [VEC_SUB]: {
-            type: "vector",
-            dimensionality: this.opts.dimensionality,
-            model: this.opts.model,
-          },
+  /**
+   * Open the project's persisted index (FTS + vector) into memory — loaded from
+   * `index/search/` when present, or created fresh on first use. Records the model
+   * + dimensionality in `index/search.json`.
+   */
+  private ensureIndex(): Promise<Index> {
+    // Memoise the in-flight promise so concurrent callers (e.g. parallel per-subject
+    // searches) share ONE open — otherwise they race on creating + persisting the index.
+    this.indexReady ??= this.openIndex();
+    return this.indexReady;
+  }
+
+  private async openIndex(): Promise<Index> {
+    const persistence = new FilesIndexerPersistence(
+      this.filesApi,
+      concatPath(this.indexDir(), "search"),
+    );
+    this.indexer = createFlexSearchIndexer({ persistence });
+    const existing = await this.indexer.getIndex(INDEX_NAME);
+    if (existing) return existing;
+    const created = await this.indexer.createIndex({
+      name: INDEX_NAME,
+      subIndexes: {
+        [FTS_SUB]: { type: "fulltext", language: "en" },
+        [VEC_SUB]: {
+          type: "vector",
+          dimensionality: this.opts.dimensionality,
+          model: this.opts.model,
         },
-      });
-      await writeJsonAtomic(this.filesApi, this.configPath(), {
-        model: this.opts.model,
-        dimensionality: this.opts.dimensionality,
-      });
-    }
-    return this.index;
+      },
+    });
+    // Record model + dimensionality only when the index is first created (the indexing
+    // path) — a read-only query that loads an existing index must not write.
+    await writeJsonAtomic(this.filesApi, this.configPath(), {
+      model: this.opts.model,
+      dimensionality: this.opts.dimensionality,
+    });
+    return created;
   }
 
-  /** Re-index one source resource (delete prior blocks, add current). */
+  /** Serialize the index to disk, throttled to at most once per `SAVE_THROTTLE_MS`. */
+  private async maybePersist(): Promise<void> {
+    if (!this.dirty || !this.indexer) return;
+    if (Date.now() - this.lastSaveAt < SAVE_THROTTLE_MS) return;
+    await this.indexer.flush();
+    this.dirty = false;
+    this.lastSaveAt = Date.now();
+  }
+
+  /** Force-serialize any pending index changes — call when an indexing pass completes. */
+  async persist(): Promise<void> {
+    if (!this.dirty || !this.indexer) return;
+    await this.indexer.flush();
+    this.dirty = false;
+    this.lastSaveAt = Date.now();
+  }
+
+  /**
+   * Re-index one source resource: replace its prior blocks with the current ones.
+   * Vectors are precomputed by the Embedder stage (read via the block provider);
+   * the FTS content is the section summary + raw text. Persists (throttled).
+   */
   async indexPage(resource: Resource, uri: string): Promise<void> {
     const index = await this.ensureIndex();
     const fullTextIndex = ftsAccess.get(index);
@@ -141,57 +189,39 @@ export class SearchAdapter extends ResourceAdapter {
     await vectorIndex.deleteDocuments([{ path }]);
 
     const blocks = await this.opts.blocks(resource, uri);
-    if (blocks.length === 0) return;
-
-    const ftsBlocks: FullTextBlock[] = blocks.map((b) => ({
-      path,
-      blockId: b.blockId,
-      content: b.text,
-    }));
-    await fullTextIndex.addDocument(ftsBlocks);
-
-    const vecBlocks: VectorBlock[] = [];
-    for (const b of blocks) {
-      vecBlocks.push({
+    if (blocks.length > 0) {
+      const ftsBlocks: FullTextBlock[] = blocks.map((b) => ({
         path,
         blockId: b.blockId,
-        embedding: await this.opts.embed(b.vectorText ?? b.text),
-      });
-    }
-    await vectorIndex.addDocument(vecBlocks);
+        content: b.text,
+      }));
+      await fullTextIndex.addDocument(ftsBlocks);
 
-    await fullTextIndex.flush();
-    await vectorIndex.flush();
+      const vecBlocks: VectorBlock[] = blocks
+        .filter((b) => b.embedding)
+        .map((b) => ({ path, blockId: b.blockId, embedding: b.embedding as Float32Array }));
+      if (vecBlocks.length > 0) await vectorIndex.addDocument(vecBlocks);
+
+      await fullTextIndex.flush();
+      await vectorIndex.flush();
+    }
+    this.dirty = true;
+    await this.maybePersist();
   }
 
-  /** Remove a source's blocks from the index. */
+  /** Remove a source's blocks from the index. Persists (throttled). */
   async removePage(uri: string): Promise<void> {
-    if (!this.index) return;
-    const path = toDocumentPath(uri);
-    const fullTextIndex = ftsAccess.get(this.index);
-    const vectorIndex = vecAccess.get(this.index);
-    await fullTextIndex.deleteDocuments([{ path }]);
-    await vectorIndex.deleteDocuments([{ path }]);
-  }
-
-  private async ensureBuilt(): Promise<Index> {
     const index = await this.ensureIndex();
-    const fullTextIndex = ftsAccess.get(index);
-    if (this.built) return index;
-    if ((await fullTextIndex.getSize()) === 0) {
-      const repository = this.repository as ResourceRepository;
-      for await (const resource of repository.getResources(this.resource.path, true)) {
-        const uri = projectRelative(resource, this.projectPath);
-        if (isSource(uri)) await this.indexPage(resource, uri);
-      }
-    }
-    this.built = true;
-    return index;
+    const path = toDocumentPath(uri);
+    await ftsAccess.get(index).deleteDocuments([{ path }]);
+    await vecAccess.get(index).deleteDocuments([{ path }]);
+    this.dirty = true;
+    await this.maybePersist();
   }
 
   /** Hybrid (RRF) search, grouped by document. */
   async search(query: SearchQuery): Promise<DocumentMatch[]> {
-    const index = await this.ensureBuilt();
+    const index = await this.ensureIndex();
     const modes = query.modes ?? ["fts", "vector"];
     const request: SearchRequest = { topK: query.topK ?? DEFAULT_TOP_K };
     if (query.paths) request.paths = query.paths.map(toDocumentPath);
@@ -254,10 +284,17 @@ export function searchBuilder(opts: { inputSignal: string }): RegisteredBuilder 
         signal: inputSignal,
         cell: "SearchIndexer",
       })) {
-        const resource = await project.getProjectResource(u.uri);
-        if (resource) {
-          log.debug("indexing page", { uri: u.uri });
-          await search.indexPage(resource, u.uri);
+        try {
+          const resource = await project.getProjectResource(u.uri);
+          if (resource) {
+            log.debug("indexing page", { uri: u.uri });
+            await search.indexPage(resource, u.uri);
+          }
+        } catch (error) {
+          log.error("indexing failed; skipping document", {
+            uri: u.uri,
+            error: error instanceof Error ? error.message : String(error),
+          });
         }
         await u.handled();
         if (!(await builder.yieldControl())) return false;
@@ -266,11 +303,20 @@ export function searchBuilder(opts: { inputSignal: string }): RegisteredBuilder 
         signal: SOURCES_REMOVED_SIGNAL,
         cell: "SearchIndexer",
       })) {
-        log.debug("removing page", { uri: u.uri });
-        await search.removePage(u.uri);
+        try {
+          log.debug("removing page", { uri: u.uri });
+          await search.removePage(u.uri);
+        } catch (error) {
+          log.error("removal failed; skipping document", {
+            uri: u.uri,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
         await u.handled();
         if (!(await builder.yieldControl())) return false;
       }
+      // Drained: force the final serialization the throttle may have skipped.
+      await search.persist();
       return true;
     },
   };

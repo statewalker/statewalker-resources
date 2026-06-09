@@ -15,7 +15,7 @@ export type QueryStateKey =
   | "Query"
   | "IntentDetection"
   | "Retrieve"
-  | "ChapterPlan"
+  | "SelectSections"
   | "Summarize"
   | "Respond"
   | "Verify"
@@ -25,9 +25,9 @@ export type QueryStateKey =
 /**
  * The query pipeline as a flat Finite State Machine.
  *
- * `IntentDetection → Retrieve → ChapterPlan → Summarize → Respond → Verify →
- * Response`, with `NegativeResponse` reachable from `IntentDetection` (off-corpus)
- * and `Retrieve` (no evidence).
+ * `IntentDetection → Retrieve → SelectSections → Summarize → Respond → Verify →
+ * Response`, with `NegativeResponse` reachable from `IntentDetection` (off-corpus),
+ * `Retrieve` (no candidates), and `SelectSections` (filter kept nothing).
  *
  * Retrieval runs two front-ends in parallel inside the `Retrieve` handler — the
  * mechanical hybrid (FTS + vector) search and the LLM topic/doc-topic class
@@ -46,11 +46,13 @@ export const QUERY_FSM: FsmStateConfig = {
     ["", "*", "IntentDetection"],
     ["IntentDetection", "onCorpus", "Retrieve"],
     ["IntentDetection", "offCorpus", "NegativeResponse"],
-    ["Retrieve", "gathered", "ChapterPlan"],
+    ["Retrieve", "gathered", "SelectSections"],
     ["Retrieve", "empty", "NegativeResponse"],
-    ["ChapterPlan", "planned", "Summarize"],
+    ["SelectSections", "selected", "Summarize"],
+    ["SelectSections", "empty", "NegativeResponse"],
     ["Summarize", "summarized", "Respond"],
     ["Respond", "answered", "Verify"],
+    ["Respond", "insufficient", "SelectSections"],
     ["Verify", "verified", "Response"],
     ["Response", "done", ""],
     ["NegativeResponse", "done", ""],
@@ -74,20 +76,28 @@ export const QUERY_FSM: FsmStateConfig = {
       },
     },
     {
-      key: "ChapterPlan",
-      description: "Deduplicate and document-order the referenced chapters.",
-      events: { planned: "Chapter plan built." },
+      key: "SelectSections",
+      description:
+        "Consume the next retrieval tier (both-front-end intersection first, then the rest); LLM-filter it for relevance and group survivors by subject. Re-entered to escalate.",
+      events: {
+        selected: "A tier was consumed (its relevant sections added to the evidence).",
+        empty: "No candidate section anywhere.",
+      },
     },
     {
       key: "Summarize",
       description:
-        "Window-bounded rolling summarization; each fold exposes the section's raw content.",
+        "Per-subject rolling summarization of the new tier (subjects in parallel); each fold exposes the section's raw content.",
       events: { summarized: "Rolling summaries produced." },
     },
     {
       key: "Respond",
-      description: "Compose the grounded, cited answer from the rolling summaries.",
-      events: { answered: "Answer composed with chapter citations." },
+      description:
+        "Compose the grounded, cited answer and judge sufficiency: answer, or escalate for more evidence.",
+      events: {
+        answered: "Answer composed (evidence sufficient, or exhausted → best-effort).",
+        insufficient: "Evidence is missing and a wider retrieval tier remains.",
+      },
     },
     {
       key: "Verify",

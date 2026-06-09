@@ -16,21 +16,29 @@ questions about anomalies, exceptions, disagreements, or surprises, and include 
 outliers otherwise. When nothing plausibly matches, return empty arrays. Selection only — do not
 answer the subject.`;
 
-export const DOC_TOPIC_SELECT_PROMPT = `You pre-filter candidate document-topics for a subject. Each
-candidate is a per-document topic with a uri, name, description, and brief. Return the uris of the
-candidates to KEEP. Be RECALL-FIRST: remove only the ones clearly non-relevant to the subject — when
-in doubt, keep. Never return an empty list if any candidate is even plausibly relevant. Selection
-only — do not answer the subject.`;
+export const SECTION_SELECT_PROMPT = `You filter candidate wiki sections for relevance to a prompt. You
+receive the full original prompt and a batch of candidate sections grouped by their source document
+(document title, then each section's URI, title, and summary). Return the URIs — verbatim — of the
+sections that could plausibly contain facts that help answer the prompt. Be selective: a section's
+title/summary must indicate it bears on the prompt; drop sections that are only tangentially related
+or merely from a relevant document. Return an empty array when none in this batch qualify. Selection
+only — do not answer the prompt.`;
 
-export const SUMMARIZE_PROMPT = `You maintain a rolling summary that serves a question. You receive
-the question and one section presented in XML tags: <previous_summary> (the summary so far; absent on
-the first section), <section_title>, <section_description> (a prior narrative summary), and
-<raw_content> (the section's original text). Fold the new section into the previous summary: produce
-ONE dense, fact-only summary that serves the question, grounded in <raw_content>, preserving every
-fact already captured. Carry forward every [[<uri>#<section>]] marker you are given and add the
-current section's marker when it contributes a fact. Do not answer the question — only summarize.`;
+export const SUMMARIZE_PROMPT = `You summarize wiki sections for a question. You receive the question
+and a BATCH of sections, each presented in XML tags: <section_title> (carrying its [[marker]]),
+<section_description> (a prior narrative summary), and <raw_content> (the section's original text).
+Produce ONE dense summary containing ONLY facts relevant to the question, grounded in the
+<raw_content> of these sections, and discarding content unrelated to the question. Carry every
+[[<uri>#<section>]] marker for a section that contributes a fact. Do not answer the question — only
+summarize.`;
 
 export const COMPOSE_PROMPT = `Answer the question grounded ONLY in the supplied rolling summaries.
-Every claim MUST carry a [[wiki://<key>/<uri>#<sectionKey>]] citation to the summary content it rests
-on, drawn from the [[...]] markers in the summaries. Do not invent citations. If the summaries do not
-support an answer, say so plainly.`;
+Each summary comes with a \`refs\` list — the section citations it is grounded in. Return the answer as
+\`claims\`: an ordered list where each claim has a \`statement\` (a sentence or bullet; markdown such as
+**bold** or a "- " prefix is fine) and a \`citations\` array. Each claim's \`citations\` MUST contain one
+or more refs drawn VERBATIM from the \`refs\` of the summaries that claim rests on. Every claim must be
+citable: if you cannot cite a statement from the supplied refs, OMIT that claim — never emit a claim
+with an empty citations array, and never invent or alter refs. Then judge sufficiency: set
+\`sufficient\` true if the summaries fully and confidently answer the question; set it false when key
+information needed to answer is absent and name the missing piece in \`missing\` (this triggers a wider
+evidence search; use null when sufficient).`;

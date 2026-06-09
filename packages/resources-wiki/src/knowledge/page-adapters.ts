@@ -1,10 +1,18 @@
 import { ResourceAdapter, type ResourceRepository } from "@statewalker/resources-workspace";
-import type { FilesApi } from "@statewalker/webrun-files";
+import { type FilesApi, tryReadFile } from "@statewalker/webrun-files";
+import {
+  fixedSizeList,
+  float32,
+  tableFromArrays,
+  tableFromIPC,
+  tableToIPC,
+} from "@uwdata/flechette";
 import { ContentAdapter } from "../content/index.js";
 import { hashStream } from "../util/hash.js";
 import { tryReadJson, tryReadText, writeJsonAtomic, writeTextAtomic } from "../util/io.js";
 import { pageArtifactPath } from "./page-paths.js";
 import type {
+  DocumentEmbeddings,
   DocumentGraph,
   DocumentMeta,
   DocumentSummary,
@@ -124,5 +132,78 @@ export class WikiPageGraph extends ResourceAdapter {
 
   async write(graph: DocumentGraph): Promise<void> {
     await writeJsonAtomic(filesApiOf(this), this.artifactPath(), graph);
+  }
+}
+
+/** Filesystem-safe slug for an embedding model id (used in the artifact name). */
+function modelSlug(model: string): string {
+  return (
+    model
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "model"
+  );
+}
+
+/**
+ * Reads/writes a source resource's per-section embeddings. Metadata (uri, source
+ * hash, model, dimensionality, ordered section keys) lives in
+ * `embeddings.<model>.<dim>.json`; the dense vectors live in the Arrow sidecar
+ * `embeddings.<model>.<dim>.arrow` as a `FixedSizeList<Float32>[dim]` column,
+ * row `i` matching `meta.sections[i]`. The model + dimensionality are part of the
+ * filenames so different models/dimensions coexist without collision.
+ */
+export class WikiPageEmbeddings extends ResourceAdapter {
+  private metaPath(model: string, dimensionality: number): string {
+    return pageArtifactPath(this.resource, `embeddings.${modelSlug(model)}.${dimensionality}.json`);
+  }
+  private vectorsPath(model: string, dimensionality: number): string {
+    return pageArtifactPath(
+      this.resource,
+      `embeddings.${modelSlug(model)}.${dimensionality}.arrow`,
+    );
+  }
+
+  /** Embeddings metadata (JSON) — cheap; used for freshness checks. */
+  getMeta(model: string, dimensionality: number): Promise<DocumentEmbeddings | undefined> {
+    return tryReadJson<DocumentEmbeddings>(filesApiOf(this), this.metaPath(model, dimensionality));
+  }
+
+  /** Section key → embedding vector, decoded from the Arrow sidecar. */
+  async getVectors(
+    model: string,
+    dimensionality: number,
+  ): Promise<Map<string, Float32Array> | undefined> {
+    const meta = await this.getMeta(model, dimensionality);
+    if (!meta) return undefined;
+    const bytes = await tryReadFile(filesApiOf(this), this.vectorsPath(model, dimensionality));
+    if (!bytes) return undefined;
+    const column = tableFromIPC(bytes).getChild("vector");
+    const vectors = new Map<string, Float32Array>();
+    meta.sections.forEach((key, i) => {
+      const v = column?.at(i);
+      if (v != null) vectors.set(key, new Float32Array(v as ArrayLike<number>));
+    });
+    return vectors;
+  }
+
+  /**
+   * Write the metadata (JSON) + dense vectors (Arrow). `vectors[i]` is the
+   * embedding for `meta.sections[i]`. The Arrow sidecar is written first and the
+   * JSON metadata (the freshness marker) last, so a crash never leaves metadata
+   * pointing at missing vectors.
+   */
+  async write(meta: DocumentEmbeddings, vectors: Float32Array[]): Promise<void> {
+    const files = filesApiOf(this);
+    const table = tableFromArrays(
+      { vector: vectors.map((v) => Array.from(v)) },
+      { types: { vector: fixedSizeList(float32(), meta.dimensionality) } },
+    );
+    const bytes = tableToIPC(table, { format: "stream" }) as Uint8Array;
+    // The Arrow vectors are written first; the JSON metadata (the freshness
+    // marker, read by getMeta) is written last so a crash never leaves metadata
+    // pointing at a missing/partial vectors file.
+    await files.write(this.vectorsPath(meta.model, meta.dimensionality), [bytes]);
+    await writeJsonAtomic(files, this.metaPath(meta.model, meta.dimensionality), meta);
   }
 }

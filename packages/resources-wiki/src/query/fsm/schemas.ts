@@ -20,8 +20,10 @@ export const intentDetectionSchema = z
       .describe("True if the prompt concerns the vault's domain; false if out of scope."),
     offCorpusReason: z
       .string()
-      .optional()
-      .describe("When onCorpus is false, a one-line reason the prompt is out of scope."),
+      .nullable()
+      .describe(
+        "When onCorpus is false, a one-line reason the prompt is out of scope; null otherwise.",
+      ),
     subjects: z
       .array(z.object({ prompt: z.string() }))
       .describe(
@@ -53,49 +55,92 @@ export const topicSelectSchema = z
     "Selected topic + outlier class keys for one subject, drawn only from the supplied lists.",
   );
 
-// ── DocTopicSelect (per subject) ─────────────────────────────────────────────
-export const docTopicSelectInputSchema = z.object({
-  subject: z.string(),
-  candidates: z.array(
-    z.object({
-      uri: z.string(),
-      name: z.string(),
-      description: z.string().optional(),
-      brief: z.string(),
-    }),
-  ),
+// ── SectionFilter (relevance filter over one token-bounded, doc-grouped batch) ─
+export const sectionFilterInputSchema = z.object({
+  question: z.string().describe("The full original prompt."),
+  documents: z
+    .array(
+      z.object({
+        title: z.string().describe("Source document title."),
+        sections: z.array(
+          z.object({
+            uri: z
+              .string()
+              .describe(
+                "The section URI (`<docUri>#<sectionKey>`) — echo this verbatim to keep it.",
+              ),
+            title: z.string(),
+            summary: z.string().optional(),
+          }),
+        ),
+      }),
+    )
+    .describe("Candidate sections grouped by their source document."),
 });
-export const docTopicSelectSchema = z
+export const sectionFilterSchema = z
   .object({
-    selected: z
+    relevantUris: z
       .array(z.string())
       .describe(
-        "The `uri`s of the candidate document-topics to KEEP. Remove only the clearly non-relevant ones — recall-first. MUST be drawn from the supplied candidate uris.",
+        "The URIs (verbatim) of sections that could plausibly contain facts answering the prompt. Drop sections unrelated to it; return an empty array when none qualify.",
       ),
   })
-  .describe("Document-topics kept after removing only clearly non-relevant ones.");
+  .describe("The relevant section URIs in this batch. Selection only — do not answer the prompt.");
 
-// ── Summarize (rolling fold, per chapter) ────────────────────────────────────
+// ── Summarize (one batch of sections → one summary, batches run in parallel) ──
 export const summarizeInputSchema = z.object({
+  /** The original prompt; only facts relevant to it are kept. */
   question: z.string(),
-  /** XML-tagged fold input: previous_summary (optional) + section_title + section_description + raw_content. */
-  section: z.string(),
+  /** XML-tagged batch: one <section_title>/<section_description>/<raw_content> block per section. */
+  sections: z.string(),
 });
 export const summarizeSchema = z.object({
   text: z
     .string()
     .describe(
-      "The updated rolling summary: dense, fact-only prose serving the question, keeping every [[<uri>#<section>]] marker.",
+      "A dense, fact-only summary of this batch serving the question, keeping every [[<uri>#<section>]] marker.",
     ),
 });
 
 // ── Respond ──────────────────────────────────────────────────────────────────
 export const composeInputSchema = z.object({
   question: z.string(),
-  summaries: z.array(z.object({ text: z.string() })),
+  summaries: z.array(
+    z.object({
+      text: z.string(),
+      /** The `[[wiki://…]]` markers grounding this summary — the citations the answer may use. */
+      refs: z.array(z.string()),
+    }),
+  ),
 });
+// Strict-compatible (OpenAI strict structured outputs): every field required, `missing` nullable.
+// The answer is a list of CLAIMS, each carrying its own citations — grounding is structural: the
+// model cannot emit a claim without a citations field.
 export const composeSchema = z.object({
-  text: z.string(),
-  citations: z.array(z.string()),
+  claims: z
+    .array(
+      z.object({
+        statement: z
+          .string()
+          .describe("One self-contained claim — a sentence or bullet; may include markdown."),
+        citations: z
+          .array(z.string())
+          .describe(
+            "The `[[wiki://…]]` refs (verbatim from the summaries' refs) grounding THIS statement. At least one; omit the claim entirely if you cannot cite it.",
+          ),
+      }),
+    )
+    .describe("The answer as ordered, individually-grounded claims."),
   suggestions: z.array(z.string()),
+  sufficient: z
+    .boolean()
+    .describe(
+      "True if the summaries fully answer the prompt; false if key information is missing.",
+    ),
+  missing: z
+    .string()
+    .nullable()
+    .describe(
+      "When not sufficient, a short description of the information still needed; null otherwise.",
+    ),
 });

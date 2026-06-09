@@ -1,11 +1,12 @@
-import { getProgress, getTerminate } from "./context.js";
+import { loggerOf } from "@statewalker/resources-workspace";
+import { getProgress, getProject, getTerminate } from "./context.js";
 import {
-  ChapterPlanTrigger,
   IntentDetectionTrigger,
   NegativeResponseTrigger,
   RespondTrigger,
   ResponseTrigger,
   RetrieveTrigger,
+  SelectSectionsTrigger,
   SummarizeTrigger,
   VerifyTrigger,
 } from "./handlers.js";
@@ -20,7 +21,7 @@ const HANDLERS: Record<QueryStateKey, QueryHandler | undefined> = {
   Query: undefined,
   IntentDetection: IntentDetectionTrigger,
   Retrieve: RetrieveTrigger,
-  ChapterPlan: ChapterPlanTrigger,
+  SelectSections: SelectSectionsTrigger,
   Summarize: SummarizeTrigger,
   Respond: RespondTrigger,
   Verify: VerifyTrigger,
@@ -32,7 +33,7 @@ const HANDLERS: Record<QueryStateKey, QueryHandler | undefined> = {
 const STAGE_FOR: Partial<Record<QueryStateKey, string>> = {
   IntentDetection: "intent",
   Retrieve: "retrieve",
-  ChapterPlan: "chapter-plan",
+  SelectSections: "select-sections",
   Summarize: "summarize",
   Respond: "respond",
   Verify: "verify",
@@ -54,7 +55,7 @@ function instrument(stateKey: QueryStateKey): QueryHandler {
  * `startProcess` swallows generator errors, so catching here is what rejects
  * `complete()` (via `_fail`) and stops the machine instead of stalling.
  */
-function guarded(handler: QueryHandler): QueryHandler {
+function guarded(stateKey: QueryStateKey, handler: QueryHandler): QueryHandler {
   return async function* (ctx) {
     try {
       const result = handler(ctx);
@@ -62,6 +63,10 @@ function guarded(handler: QueryHandler): QueryHandler {
         yield* result as AsyncGenerator<string>;
       }
     } catch (error) {
+      loggerOf(getProject(ctx), "QueryFsm").error("stage failed", {
+        state: stateKey,
+        error: error instanceof Error ? error.message : String(error),
+      });
       getProgress(ctx)._fail(error);
       await getTerminate(ctx)();
     }
@@ -76,7 +81,7 @@ export function load(state: string): QueryHandler[] {
   const key = state as QueryStateKey;
   const mods: QueryHandler[] = [instrument(key)];
   const handler = HANDLERS[key];
-  if (handler) mods.push(guarded(handler));
+  if (handler) mods.push(guarded(key, handler));
   return mods;
 }
 

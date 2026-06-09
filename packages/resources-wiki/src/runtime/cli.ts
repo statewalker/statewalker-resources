@@ -110,8 +110,36 @@ export async function runWikiCli(args: string[], deps: CliDeps): Promise<void> {
       break;
     }
     case "query": {
-      const answer = await project.requireAdapter(WikiQuery).ask(rest.join(" ")).complete();
-      log(answer.text);
+      const progress = project.requireAdapter(WikiQuery).ask(rest.join(" "));
+      // Print each stage as the FSM advances, and stream the answer text live.
+      let printedStages = 0;
+      let shown = 0;
+      progress.onChange(() => {
+        for (; printedStages < progress.stages.length; printedStages++) {
+          log(`  ${progress.stages[printedStages].name}: running`);
+        }
+        const text = progress.partialText;
+        if (text.length < shown) {
+          // The run escalated and re-started composing — discard the prior draft.
+          process.stdout.write("\n  …gathering more, revising…\n");
+          shown = 0;
+        }
+        if (text.length > shown) {
+          process.stdout.write(text.slice(shown));
+          shown = text.length;
+        }
+      });
+      const answer = await progress.complete();
+      // If nothing streamed (e.g. non-streaming provider), print the final text once.
+      if (shown === 0) log(answer.text);
+      else process.stdout.write("\n");
+      for (const t of answer.topics) {
+        log(`  topic: ${t.name}${t.citations.length ? ` (${t.citations.length} refs)` : ""}`);
+      }
+      for (const o of answer.outliers) {
+        log(`  outlier: ${o.name}${o.citations.length ? ` (${o.citations.length} refs)` : ""}`);
+      }
+      for (const s of answer.suggestions) log(`  suggestion: ${s}`);
       for (const c of answer.caveats) log(`  caveat: ${c}`);
       break;
     }

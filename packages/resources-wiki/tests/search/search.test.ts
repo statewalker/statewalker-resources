@@ -26,21 +26,24 @@ import {
 // by which fixture keyword it contains, so vector search is predictable.
 const DIM = 4;
 const KEYWORDS = ["alpha", "bravo", "charlie", "delta"];
-const embed: EmbedFn = async (text) => {
+function vec(text: string): Float32Array {
   const v = new Float32Array(DIM);
   KEYWORDS.forEach((k, i) => {
     if (text.toLowerCase().includes(k)) v[i] = 1;
   });
   return v;
-};
+}
+// Query-time embedder (corpus vectors are precomputed on the blocks below).
+const embed: EmbedFn = async (text) => vec(text);
 
-// Fixture sections per source URI.
+// Fixture sections per source URI, each with a precomputed embedding (as the
+// Embedder stage would have produced).
 const SECTIONS: Record<string, SearchBlock[]> = {
   "a.md": [
-    { blockId: "intro", text: "alpha alpha intro", vectorText: "alpha" },
-    { blockId: "body", text: "bravo body text", vectorText: "bravo" },
+    { blockId: "intro", text: "alpha alpha intro", embedding: vec("alpha") },
+    { blockId: "body", text: "bravo body text", embedding: vec("bravo") },
   ],
-  "b.md": [{ blockId: "main", text: "charlie main content", vectorText: "charlie" }],
+  "b.md": [{ blockId: "main", text: "charlie main content", embedding: vec("charlie") }],
 };
 
 const blocks = async (_resource: Resource, uri: string): Promise<SearchBlock[]> =>
@@ -106,6 +109,40 @@ describe("SearchAdapter", () => {
     const search = await buildAndSearch();
     const results = await search.search({ query: "charlie", modes: ["fts"] });
     expect(results.find((r) => r.uri === "b.md")).toBeDefined();
+  });
+
+  it("persists the index and loads it on a fresh adapter without rebuilding", async () => {
+    await buildAndSearch();
+    const filesApi = (repository as unknown as { filesApi: MemFilesApi }).filesApi;
+
+    // The serialized index lives under index/search/.
+    const persisted: string[] = [];
+    for await (const info of filesApi.list("proj/.project/index/search", { recursive: true })) {
+      if (info.kind === "file") persisted.push(info.path);
+    }
+    expect(persisted.length).toBeGreaterThan(0);
+
+    // A fresh repository over the SAME files searches the loaded index — the block
+    // provider throws if touched, proving no query-time rebuild/re-embedding occurs.
+    const repo2 = new ResourceRepository({ filesApi });
+    repo2.register("", ContentReadAdapter);
+    repo2.register("", ContentWriteAdapter);
+    repo2.register("", TextAdapter);
+    repo2.register("", Project);
+    repo2.register("", ProjectBuilder);
+    repo2.register(ResourceRepository, Workspace);
+    registerContentExtraction(repo2);
+    registerSearch(repo2, {
+      embed,
+      model: "fixture",
+      dimensionality: DIM,
+      blocks: async () => {
+        throw new Error("block provider must not be called on a loaded index");
+      },
+    });
+    const project2 = (await repo2.requireAdapter<Workspace>(Workspace).getProject("proj"))!;
+    const results = await project2.requireAdapter(SearchAdapter).search({ query: "alpha" });
+    expect(results.find((r) => r.uri === "a.md")).toBeDefined();
   });
 });
 

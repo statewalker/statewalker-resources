@@ -23,7 +23,10 @@ function required(env: Record<string, string | undefined>, key: string): string 
  * Resolve the LLM provider + model configuration from environment variables — the
  * composition-root boundary (adapters read no env). Selects a provider via
  * `WIKI_PROVIDER` (`openai` | `google`, default `openai`); model/embedding ids and
- * dimensionality are overridable via `WIKI_MODEL` / `WIKI_EMBED_MODEL` / `WIKI_EMBED_DIM`.
+ * dimensionality are overridable via `WIKI_MODEL` / `WIKI_MODEL_FAST` / `WIKI_EMBED_MODEL`
+ * / `WIKI_EMBED_DIM`. `WIKI_MODEL_FAST` sets the model the section-relevance filter
+ * (`queryFast`) uses; when unset the filter falls back to `WIKI_MODEL` — a too-small
+ * tier (e.g. gpt-4.1-nano) under-selects relevant sections, so opt into it deliberately.
  * The returned `provider` turns model *names* into runtime models for `LlmProjectAdapter`.
  */
 export function resolveProvidersFromEnv(
@@ -39,7 +42,10 @@ export function resolveProvidersFromEnv(
         languageModel: (name) => google(name),
         textEmbeddingModel: (name) => google.embeddingModel(name),
       },
-      models: { default: env.WIKI_MODEL ?? "gemini-2.5-flash" },
+      models: {
+        default: env.WIKI_MODEL ?? "gemini-2.5-flash",
+        ...(env.WIKI_MODEL_FAST ? { queryFast: env.WIKI_MODEL_FAST } : {}),
+      },
       embedModel: env.WIKI_EMBED_MODEL ?? "text-embedding-004",
       dimensionality: Number(env.WIKI_EMBED_DIM ?? "768"),
     };
@@ -50,7 +56,10 @@ export function resolveProvidersFromEnv(
       languageModel: (name) => openai(name),
       textEmbeddingModel: (name) => openai.embeddingModel(name),
     },
-    models: { default: env.WIKI_MODEL ?? "gpt-4.1-mini" },
+    models: {
+      default: env.WIKI_MODEL ?? "gpt-4.1-mini",
+      ...(env.WIKI_MODEL_FAST ? { queryFast: env.WIKI_MODEL_FAST } : {}),
+    },
     embedModel: env.WIKI_EMBED_MODEL ?? "text-embedding-3-small",
     dimensionality: Number(env.WIKI_EMBED_DIM ?? "1536"),
   };
