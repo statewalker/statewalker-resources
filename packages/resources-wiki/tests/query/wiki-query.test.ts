@@ -80,6 +80,22 @@ function stubLlm(): LlmCaller {
       if (spec.name === "extract-document-meta") return { output: META as unknown as never, usage };
       if (spec.name === "reformulate-query")
         return { output: reformulation as unknown as never, usage };
+      if (spec.name === "select-topics") {
+        // Stand in for the selection LLM: pick the available classes named by the
+        // test's `topicDescent` route (mirrors a model judging relevance).
+        const input = spec.input as {
+          availableTopics: { key: string }[];
+          availableOutliers: { key: string }[];
+        };
+        const want = new Set(reformulation.topicDescent ?? []);
+        return {
+          output: {
+            topicKeys: input.availableTopics.map((t) => t.key).filter((k) => want.has(k)),
+            outlierKeys: input.availableOutliers.map((o) => o.key).filter((k) => want.has(k)),
+          } as unknown as never,
+          usage,
+        };
+      }
       if (spec.name === "compose-answer") {
         // Cite whatever evidence we were given (first section), as a [[wiki://...]] marker.
         const input = spec.input as {

@@ -26,6 +26,8 @@ const embed: EmbedFn = async (text) => {
   if (text.toLowerCase().includes("acme")) v[0] = 1;
   return v;
 };
+const embedBatch = async (texts: string[]): Promise<Float32Array[]> =>
+  Promise.all(texts.map((t) => embed(t)));
 
 const SUMMARY: DocumentSummaryOutput = {
   title: "Acme",
@@ -64,6 +66,17 @@ const llm: LlmCaller = {
         return out(GRAPH);
       case "reformulate-query":
         return out(REFORMULATION);
+      case "select-topics": {
+        const input = spec.input as {
+          availableTopics: { key: string }[];
+          availableOutliers: { key: string }[];
+        };
+        const want = new Set(REFORMULATION.topicDescent ?? []);
+        return out({
+          topicKeys: input.availableTopics.map((t) => t.key).filter((k) => want.has(k)),
+          outlierKeys: input.availableOutliers.map((o) => o.key).filter((k) => want.has(k)),
+        });
+      }
       case "compose-answer": {
         const ev = (spec.input as { evidence: { uri: string; sectionKey: string }[] }).evidence[0];
         return out({
@@ -107,7 +120,14 @@ describe.each(["mem", "node"] as const)("registerWiki end-to-end (%s FilesApi)",
   it("scans a project into a queryable wiki", async () => {
     const filesApi = await makeFilesApi(kind);
     const repository = new ResourceRepository({ filesApi });
-    registerWiki(repository, { models, llm, embed, embedModel: "fixture", dimensionality: DIM });
+    registerWiki(repository, {
+      models,
+      llm,
+      embed,
+      embedBatch,
+      embedModel: "fixture",
+      dimensionality: DIM,
+    });
 
     const workspace = repository.requireAdapter<Workspace>(Workspace);
     const project = await workspace.getProject("proj", true);
@@ -118,6 +138,7 @@ describe.each(["mem", "node"] as const)("registerWiki end-to-end (%s FilesApi)",
       models,
       llm,
       embed,
+      embedBatch,
       embedModel: "fixture",
       dimensionality: DIM,
     });

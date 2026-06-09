@@ -6,12 +6,13 @@ import {
   type ResourceRepository,
 } from "@statewalker/resources-workspace";
 import { z } from "zod";
-import { WikiTopicIndex } from "../knowledge/indexes.js";
+import { WikiOutlierIndex, WikiTopicIndex } from "../knowledge/indexes.js";
 import {
   ResourceTextContentCache,
   WikiPageMeta,
   WikiPageSummary,
 } from "../knowledge/page-adapters.js";
+import type { DocumentMeta, GlobalOutlier, GlobalTopic } from "../knowledge/types.js";
 import { type LlmCaller, type LlmModels, resolveModel } from "../llm/index.js";
 import { SearchAdapter } from "../search/index.js";
 import { parseWikiUri, toCanonical } from "../uri/wiki-uri.js";
@@ -65,6 +66,35 @@ const reformulationSchema = z
 
 const reformulationInputSchema = z.object({ question: z.string() });
 
+const availableClassSchema = z.object({
+  key: z.string(),
+  name: z.string(),
+  description: z.string().optional(),
+});
+
+const topicSelectSchema = z
+  .object({
+    topicKeys: z
+      .array(z.string())
+      .describe(
+        "Topic-class key slugs (from availableTopics) plausibly worth searching for this subject. Be exhaustive — prefer over-inclusion. MUST be drawn from the supplied keys.",
+      ),
+    outlierKeys: z
+      .array(z.string())
+      .describe(
+        "Outlier-class key slugs (from availableOutliers) plausibly relevant to this subject. MUST be drawn from the supplied keys.",
+      ),
+  })
+  .describe(
+    "Selected topic + outlier class keys for one subject, drawn only from the supplied lists.",
+  );
+
+const topicSelectInputSchema = z.object({
+  subject: z.string().describe("The question being routed."),
+  availableTopics: z.array(availableClassSchema),
+  availableOutliers: z.array(availableClassSchema),
+});
+
 const composeSchema = z.object({
   text: z.string(),
   citations: z.array(z.string()),
@@ -87,6 +117,15 @@ textQueries (keyword/FTS), semanticQueries (semantic/vector), and topicDescent (
 class names/keys). Use textQueries/semanticQueries for questions naming explicit
 entities or notions; topicDescent for thematic questions. When unsure, emit both a
 semantic query and a topic descent.`;
+
+const TOPIC_SELECT_PROMPT = `You select the topic and outlier classes worth searching for
+a subject. You receive the subject and the corpus's topic + outlier classes, each as
+key/name/description with no documents attached. Return the KEY SLUGS — drawn verbatim from
+the supplied lists — of every class plausibly relevant to the subject. Be EXHAUSTIVE:
+over-inclusion is corrected by later grounding, but a class omitted here can never
+contribute. Populate outlierKeys for questions about anomalies, exceptions, disagreements,
+or surprises, and include plainly-relevant outliers otherwise. When nothing plausibly
+matches, return empty arrays. Selection only — do not answer the subject.`;
 
 const COMPOSE_PROMPT = `Answer the question grounded ONLY in the supplied evidence
 sections. Every claim MUST carry a [[wiki://<key>/<uri>#<sectionKey>]] citation to the
@@ -248,50 +287,83 @@ export class WikiQuery extends ResourceAdapter {
       log.debug("no search index available — skipping FTS/vector branch");
     }
 
-    // Topic-descent branch: match topics, descend to their referenced documents' sections.
-    const topicTerms = routes.topicDescent ?? (hasAny ? [] : [question]);
+    // Topic-descent branch: an LLM selects the relevant topic/outlier classes for the
+    // subject from the indexes (key/name/description only), then we descend into the
+    // selected classes' referenced documents' sections. This replaces mechanical string
+    // matching — relevance is judged semantically, exhaustively (over-include).
+    const wantTopicDescent = (routes.topicDescent?.length ?? 0) > 0 || !hasAny;
     let topicsExplored = 0;
     let topicsMatched = 0;
     let documentsExplored = 0;
-    if (topicTerms.length > 0) {
-      log.debug("topic descent", { terms: topicTerms });
-      const index = this.project.requireAdapter(WikiTopicIndex);
-      for await (const topic of index.list()) {
-        topicsExplored++;
-        const match = topicTerms.some(
-          (t) =>
-            topic.key === t ||
-            topic.name.toLowerCase().includes(t.toLowerCase()) ||
-            t.toLowerCase().includes(topic.key),
-        );
-        log.debug("index topic", { key: topic.key, name: topic.name, matched: match });
-        if (!match) continue;
-        topicsMatched++;
-        log.debug("matched topic", { key: topic.key, references: topic.references.length });
-        for (const ref of topic.references) {
-          // References are `<uri>#<docTopicKey>`: descend only into the sections that
-          // source's own topic declaration covers, not every section of the document.
-          const { path: docUri, section: docTopicKey } = parseWikiUri(ref.uri);
-          const resource = await this.project.getProjectResource(docUri);
-          if (!resource) continue;
-          const docTopic = docTopicKey
-            ? (await resource.requireAdapter(WikiPageMeta).get())?.topics.find(
-                (t) => t.key === docTopicKey,
-              )
-            : undefined;
-          // Fall back to all sections when the document-specific topic can't be resolved.
-          const sectionKeys =
-            docTopic?.sectionKeys ??
-            (await resource.requireAdapter(WikiPageSummary).get())?.sections.map((s) => s.key) ??
-            [];
-          documentsExplored++;
-          log.debug("exploring document", {
-            uri: docUri,
-            docTopic: docTopicKey ?? null,
-            sections: sectionKeys.length,
-          });
-          for (const sectionKey of sectionKeys) await add(docUri, sectionKey);
-        }
+    if (wantTopicDescent) {
+      const topics = new Map<string, GlobalTopic>();
+      const outliers = new Map<string, GlobalOutlier>();
+      for await (const t of this.project.requireAdapter(WikiTopicIndex).list()) {
+        topics.set(t.key, t);
+      }
+      for await (const o of this.project.requireAdapter(WikiOutlierIndex).list()) {
+        outliers.set(o.key, o);
+      }
+      topicsExplored = topics.size + outliers.size;
+      if (topicsExplored > 0) {
+        const toClass = (c: { key: string; name: string; description?: string }) => ({
+          key: c.key,
+          name: c.name,
+          description: c.description,
+        });
+        const { output: sel, usage: selUsage } = await this.opts.llm.generate({
+          name: "select-topics",
+          description:
+            "Select the topic + outlier class keys worth searching for the subject, from key/name/description only.",
+          model: resolveModel(this.opts.models, "query"),
+          system: TOPIC_SELECT_PROMPT,
+          input: {
+            subject: question,
+            availableTopics: [...topics.values()].map(toClass),
+            availableOutliers: [...outliers.values()].map(toClass),
+          },
+          inputSchema: topicSelectInputSchema,
+          outputSchema: topicSelectSchema,
+        });
+        inputTokens += selUsage.inputTokens;
+        outputTokens += selUsage.outputTokens;
+
+        const selectedTopics = sel.topicKeys
+          .map((k) => topics.get(k))
+          .filter((t): t is GlobalTopic => !!t);
+        const selectedOutliers = sel.outlierKeys
+          .map((k) => outliers.get(k))
+          .filter((o): o is GlobalOutlier => !!o);
+        topicsMatched = selectedTopics.length + selectedOutliers.length;
+        log.debug("topic selection", {
+          topics: selectedTopics.map((t) => t.key),
+          outliers: selectedOutliers.map((o) => o.key),
+        });
+
+        // Descend a selected class into its referenced documents. References are
+        // `<uri>#<per-doc-key>`: descend only into the sections that source's own
+        // declaration covers, falling back to all sections when unresolvable.
+        const descend = async (
+          references: { uri: string }[],
+          declsOf: (meta: DocumentMeta) => { key: string; sectionKeys: string[] }[],
+        ) => {
+          for (const ref of references) {
+            const { path: docUri, section: perDocKey } = parseWikiUri(ref.uri);
+            const resource = await this.project.getProjectResource(docUri);
+            if (!resource) continue;
+            const meta = await resource.requireAdapter(WikiPageMeta).get();
+            const decl =
+              perDocKey && meta ? declsOf(meta).find((d) => d.key === perDocKey) : undefined;
+            const sectionKeys =
+              decl?.sectionKeys ??
+              (await resource.requireAdapter(WikiPageSummary).get())?.sections.map((s) => s.key) ??
+              [];
+            documentsExplored++;
+            for (const sectionKey of sectionKeys) await add(docUri, sectionKey);
+          }
+        };
+        for (const t of selectedTopics) await descend(t.references, (m) => m.topics);
+        for (const o of selectedOutliers) await descend(o.references, (m) => m.outliers);
       }
     }
 
