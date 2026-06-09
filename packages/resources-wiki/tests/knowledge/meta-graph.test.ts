@@ -105,6 +105,24 @@ describe("filterUnknownSubjects", () => {
     expect(out.statements).toEqual([["Acme", "makes", "widgets"]]);
     expect(out.relations).toEqual([]);
   });
+
+  it("drops off-shape triples (wrong arity or empty fields)", () => {
+    const sections: SectionGraph[] = [
+      {
+        sectionKey: "s",
+        entities: [{ value: "Acme" }],
+        statements: [
+          ["Acme", "makes", "widgets"],
+          ["Acme", "phone"], // 2 elements — résumé field with no value
+          ["Acme", "email", ""], // empty object literal
+          ["Acme", "based", "in", "NY"], // 4 elements
+        ],
+        relations: [],
+      },
+    ];
+    const [out] = filterUnknownSubjects(sections);
+    expect(out.statements).toEqual([["Acme", "makes", "widgets"]]);
+  });
 });
 
 describe("meta + graph builders", () => {

@@ -12,10 +12,13 @@ export const GRAPH_SIGNAL = "graph";
 export const GRAPH_BUILDER_ID = "GraphExtractor";
 
 /**
- * Deterministic post-extraction validation: drop any triple whose subject is not
- * declared as an entity.value somewhere in the document graph. Entity coverage is
- * checked against the WHOLE document, so a triple may reuse a subject from an
- * earlier section. Predicate and object are not validated.
+ * Deterministic post-extraction validation. Drops any triple that is not
+ * well-formed — exactly three non-empty strings — or whose subject is not
+ * declared as an entity.value somewhere in the document graph. The shape check
+ * lets the output schema stay lenient (the model is not strictly constrained, so
+ * an off-shape triple must not be allowed to fail the whole-document parse).
+ * Entity coverage is checked against the WHOLE document, so a triple may reuse a
+ * subject from an earlier section. Predicate and object are not validated.
  */
 export function filterUnknownSubjects(sections: SectionGraph[]): SectionGraph[] {
   const knownSubjects = new Set<string>();
@@ -23,7 +26,9 @@ export function filterUnknownSubjects(sections: SectionGraph[]): SectionGraph[] 
     for (const e of s.entities) knownSubjects.add(e.value);
   }
   const keep = (t: readonly string[]): boolean =>
-    typeof t[0] === "string" && knownSubjects.has(t[0]);
+    t.length === 3 &&
+    t.every((x) => typeof x === "string" && x.length > 0) &&
+    knownSubjects.has(t[0]);
   return sections.map((s) => ({
     ...s,
     statements: s.statements.filter(keep),
@@ -50,33 +55,45 @@ export function graphBuilder(deps: KnowledgeBuilderDeps): RegisteredBuilder {
         signal: SUMMARIZED_SIGNAL,
         cell: GRAPH_BUILDER_ID,
       })) {
-        const resource = await project.getProjectResource(u.uri);
-        const summary = await resource?.requireAdapter(WikiPageSummary).get();
-        const hash = await resource?.requireAdapter(ResourceTextContentCache).getRawMeta();
-        const prior = await resource?.requireAdapter(WikiPageGraph).get();
-        const fresh = !!prior && !!hash && prior.sourceHash === hash.hash;
-        if (resource && summary && (deps.force || !fresh)) {
-          log.info("extracting graph", { uri: u.uri });
-          const { output } = await deps.llm.generate({
-            name: "extract-document-graph",
-            description:
-              "Per-section structured signal: entities plus [subject, predicate, object] statements (object is a literal) and relations (object is an entity). Subject is always an entity.value.",
-            model: resolveModel(deps.models, "graph"),
-            system,
-            input: { uri: u.uri, sections: summary.sections },
-            inputSchema: graphExtractorInputSchema,
-            outputSchema: documentGraphSchema,
-            abortSignal: deps.abortSignal,
-          });
+        try {
+          const resource = await project.getProjectResource(u.uri);
+          const summary = await resource?.requireAdapter(WikiPageSummary).get();
+          const hash = await resource?.requireAdapter(ResourceTextContentCache).getRawMeta();
+          const prior = await resource?.requireAdapter(WikiPageGraph).get();
+          const fresh = !!prior && !!hash && prior.sourceHash === hash.hash;
+          if (resource && summary && (deps.force || !fresh)) {
+            log.info("extracting graph", { uri: u.uri });
+            const { output } = await deps.llm.generate({
+              name: "extract-document-graph",
+              description:
+                "Per-section structured signal: entities plus [subject, predicate, object] statements (object is a literal) and relations (object is an entity). Subject is always an entity.value.",
+              model: resolveModel(deps.models, "graph"),
+              system,
+              input: { uri: u.uri, sections: summary.sections },
+              inputSchema: graphExtractorInputSchema,
+              outputSchema: documentGraphSchema,
+              abortSignal: deps.abortSignal,
+            });
 
-          const graph: DocumentGraph = {
+            const graph: DocumentGraph = {
+              uri: u.uri,
+              generated: new Date().toISOString(),
+              sourceHash: hash?.hash ?? "",
+              sections: filterUnknownSubjects(output.sections),
+            };
+            await resource.requireAdapter(WikiPageGraph).write(graph);
+            yield { signal: GRAPH_SIGNAL, uri: u.uri, stamp: u.stamp };
+          }
+        } catch (error) {
+          // Surface the underlying validation cause (and finishReason) when the
+          // AI SDK throws NoObjectGeneratedError, otherwise the failure is opaque.
+          const detail = error as { cause?: unknown; finishReason?: unknown } | undefined;
+          log.error("graph extraction failed; skipping document", {
             uri: u.uri,
-            generated: new Date().toISOString(),
-            sourceHash: hash?.hash ?? "",
-            sections: filterUnknownSubjects(output.sections),
-          };
-          await resource.requireAdapter(WikiPageGraph).write(graph);
-          yield { signal: GRAPH_SIGNAL, uri: u.uri, stamp: u.stamp };
+            error: error instanceof Error ? error.message : String(error),
+            cause: detail?.cause instanceof Error ? detail.cause.message : undefined,
+            finishReason: detail?.finishReason,
+          });
         }
         await u.handled();
         if (!(await builder.yieldControl())) return false;

@@ -163,11 +163,16 @@ export const entitySchema = z
   })
   .describe("An actor / method / dataset / concept the section is about.");
 
+// Lenient on purpose: no `.length(3)` / element `.min(1)` constraints. With
+// `strictJsonSchema: false` the schema is NOT enforced during generation, so a
+// single off-shape triple (missing field, 2- or 4-element array) would make the
+// WHOLE-document parse throw and drop the document. Triple shape is enforced
+// deterministically afterwards (see `filterUnknownSubjects`), matching how
+// unknown subjects are already handled.
 const tripleArraySchema = z
-  .array(z.string().min(1))
-  .length(3)
+  .array(z.string())
   .describe(
-    "[subject, predicate, object] triple. Subject (index 0) MUST be an entity.value declared in this document's graph.",
+    "[subject, predicate, object] triple — exactly three non-empty strings. Subject (index 0) MUST be an entity.value declared in this document's graph. Off-shape triples are dropped by the runtime filter.",
   );
 
 export const statementSchema = tripleArraySchema.describe(
