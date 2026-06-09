@@ -30,12 +30,14 @@ export {
   fillCorpusPurpose,
   GRAPH_EXTRACTOR_SYSTEM_PROMPT,
   META_EXTRACTOR_SYSTEM_PROMPT,
+  REORGANIZER_SYSTEM_PROMPT,
   SUMMARIZER_SYSTEM_PROMPT,
 } from "./prompts.js";
 export {
   PRUNE_BUILDER_ID,
   pruneBuilder,
   REORGANIZE_BUILDER_ID,
+  type ReorganizeBuilderDeps,
   reorganizeBuilder,
 } from "./reorganize.js";
 export {
@@ -45,6 +47,11 @@ export {
   documentGraphSchema,
   documentMetaSchema,
   documentSummarySchema,
+  type ReorganizeAction,
+  type ReorganizeActions,
+  type ReorganizerInput,
+  reorganizeActionsSchema,
+  reorganizerInputSchema,
   type SummarizerInput,
   sectionSummarySchema,
   summarizerInputSchema,

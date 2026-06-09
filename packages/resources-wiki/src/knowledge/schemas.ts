@@ -208,7 +208,110 @@ export const graphExtractorInputSchema = z
   })
   .describe("Input to the per-section graph extraction call. Returns DocumentGraph.");
 
+// ── Reorganizer (LLM topic merge) ────────────────────────────────────────────
+// Ported from wiki-runtime's reorganizeActionsSchema / reorganizerInputSchema.
+// Candidates are grouped by key, so every action carries a `perDocUris` array.
+
+export const reorganizeActionSchema = z
+  .discriminatedUnion("kind", [
+    z
+      .object({
+        kind: z.literal("match-existing"),
+        globalKey: z
+          .string()
+          .min(1)
+          .describe("Existing global topic key slug to record the candidate under."),
+        perDocUris: z
+          .array(z.string().min(1))
+          .min(1)
+          .describe("'<uri>#<per-doc-topic-key>' references to record under the existing global."),
+      })
+      .describe(
+        "The candidate matches an existing global topic. Prefer this over coining a new one.",
+      ),
+    z
+      .object({
+        kind: z.literal("extend-existing"),
+        globalKey: z.string().min(1).describe("Existing global topic key to extend."),
+        descriptionExtension: z
+          .string()
+          .min(1)
+          .describe(
+            "One sentence appended to the existing description; the original is preserved verbatim.",
+          ),
+        perDocUris: z
+          .array(z.string().min(1))
+          .min(1)
+          .describe("'<uri>#<per-doc-topic-key>' references to record under the extended global."),
+      })
+      .describe(
+        "The candidate overlaps an existing global but adds a facet its description lacks.",
+      ),
+    z
+      .object({
+        kind: z.literal("new-global"),
+        name: z
+          .string()
+          .min(1)
+          .describe("Generic, reusable global topic name. NEVER instance-specific."),
+        description: z
+          .string()
+          .min(1)
+          .describe("One-line generic description for the new global topic."),
+        perDocUris: z
+          .array(z.string().min(1))
+          .min(1)
+          .describe("'<uri>#<per-doc-topic-key>' references that seed the new global topic."),
+      })
+      .describe("The candidate fits no existing global — coin a new one. Last resort."),
+  ])
+  .describe("One reorganization decision for a leftover candidate topic group.");
+
+export const reorganizeActionsSchema = z
+  .object({
+    actions: z
+      .array(reorganizeActionSchema)
+      .describe("One action per leftover candidate group. May be empty."),
+  })
+  .describe(
+    "Output of the LLM reorganize round; drives mechanical updates to the global topic index.",
+  );
+
+export const reorganizerCandidateSchema = z
+  .object({
+    key: z.string().describe("Candidate's per-doc key slug (not yet in the global index)."),
+    name: z.string().describe("Candidate's name."),
+    description: z.string().describe("Candidate's abstract description (may be empty)."),
+    perDocUris: z
+      .array(z.string().min(1))
+      .min(1)
+      .describe("'<uri>#<key>' references this candidate group carries."),
+  })
+  .describe("One leftover per-doc topic group the reorganizer must place in the global index.");
+
+export const reorganizerExistingTopicSchema = z
+  .object({
+    key: z.string(),
+    name: z.string(),
+    description: z.string(),
+  })
+  .describe("Existing global topic entry the reorganizer may match against or extend.");
+
+export const reorganizerInputSchema = z
+  .object({
+    existingTopics: z
+      .array(reorganizerExistingTopicSchema)
+      .describe("Current global topics — preferred targets for match / extend actions."),
+    candidates: z
+      .array(reorganizerCandidateSchema)
+      .describe("Leftover per-doc topic groups not absorbed by the exact-key pre-merge."),
+  })
+  .describe("Input to the LLM reorganize round. Returns ReorganizeActions.");
+
 export type DocumentSummaryOutput = z.infer<typeof documentSummarySchema>;
 export type SummarizerInput = z.infer<typeof summarizerInputSchema>;
 export type DocumentMetaOutput = z.infer<typeof documentMetaSchema>;
 export type DocumentGraphOutput = z.infer<typeof documentGraphSchema>;
+export type ReorganizeActions = z.infer<typeof reorganizeActionsSchema>;
+export type ReorganizeAction = ReorganizeActions["actions"][number];
+export type ReorganizerInput = z.infer<typeof reorganizerInputSchema>;

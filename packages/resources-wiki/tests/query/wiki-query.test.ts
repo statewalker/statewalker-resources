@@ -134,7 +134,7 @@ async function buildProject() {
   builder.registerBuilder(contentBuilder());
   builder.registerBuilder(summarizeBuilder({ models, llm }));
   builder.registerBuilder(metaBuilder({ models, llm }));
-  builder.registerBuilder(reorganizeBuilder());
+  builder.registerBuilder(reorganizeBuilder({ models, llm }));
   // Index sections for search: fts over summary, vector over summary.
   builder.registerBuilder(searchBuilder({ inputSignal: "summarized" }));
   for await (const _ of builder.run()) {

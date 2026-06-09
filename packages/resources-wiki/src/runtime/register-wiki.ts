@@ -105,7 +105,7 @@ export function createWikiBuilders(deps: WikiDeps): RegisteredBuilder[] {
     summarizeBuilder(knowledge),
     metaBuilder(knowledge),
     graphBuilder(knowledge),
-    reorganizeBuilder(),
+    reorganizeBuilder(knowledge),
     pruneBuilder(),
     searchBuilder({ inputSignal: SUMMARIZED_SIGNAL }),
   ];

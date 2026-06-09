@@ -61,6 +61,10 @@ function tracker() {
           return out({
             sections: [{ sectionKey: "s", entities: [], statements: [], relations: [] }],
           });
+        case "reorganize-topics":
+          // No semantic merges — the reorganizer's fallback coins each leftover
+          // by its own key, preserving the mechanical exact-key behaviour.
+          return out({ actions: [] });
         default:
           throw new Error(`unexpected ${spec.name}`);
       }

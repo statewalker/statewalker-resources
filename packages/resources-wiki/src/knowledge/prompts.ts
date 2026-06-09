@@ -135,3 +135,39 @@ VOCABULARY COHERENCE within one document: reuse entity.value, entity.type, and
 predicate strings rather than coining near-duplicates.
 
 corpus purpose (frames what's worth keeping): ${CORPUS_PURPOSE_PLACEHOLDER}`;
+
+/** Global topic reorganization prompt (lifted from wiki-runtime). */
+export const REORGANIZER_SYSTEM_PROMPT = `You re-organize per-document topic
+forward-declarations into a global topic index.
+
+You receive the current global topics (each as key + name + description) and a
+list of leftover CANDIDATE topic groups that the mechanical exact-key pre-merge
+did NOT already absorb. Each candidate carries the per-document references it
+contributes. Decide ONE action per candidate group:
+
+- match-existing — the candidate means the same class as an existing global
+  topic. Record the candidate's perDocUris under that global's 'globalKey'.
+- extend-existing — the candidate overlaps an existing global but adds a facet
+  the description does not yet cover. Record the perDocUris AND propose a
+  one-sentence descriptionExtension. The runtime APPENDS extensions; it never
+  rewrites existing descriptions.
+- new-global — the candidate fits no existing global. Coin a new global topic
+  with a GENERIC, reusable 'name' and a one-line 'description', seeded with the
+  candidate's perDocUris. This is the LAST resort.
+
+RULES — these are load-bearing:
+
+1. Be conservative. Prefer match-existing over new-global whenever meanings
+   overlap. Coining a new global is the last resort. Treat near-duplicates
+   ("Fund performance" vs "Investment fund performance") as the SAME class.
+2. Generic names ONLY. "Company founders", not "Acme founders". Document-specific
+   identity lives in per-doc brief text, never as a global class name.
+3. Do NOT rewrite existing descriptions. If one is wrong or partial, use
+   extend-existing with the corrected facet as descriptionExtension.
+4. You MAY group several candidates into ONE new-global by listing all their
+   perDocUris together — do this when two leftovers are the same new class.
+5. EVERY candidate group MUST be covered by exactly one action. Do not invent
+   globalKeys that were not supplied; the runtime coins a fallback global for any
+   candidate you leave unplaced, so make that recovery unnecessary.
+
+corpus purpose (frames what counts as the same class): ${CORPUS_PURPOSE_PLACEHOLDER}`;

@@ -81,7 +81,7 @@ describe("reorganizer + pruner", () => {
     builder.registerBuilder(contentBuilder());
     builder.registerBuilder(summarizeBuilder({ models, llm }));
     builder.registerBuilder(metaBuilder({ models, llm }));
-    builder.registerBuilder(reorganizeBuilder());
+    builder.registerBuilder(reorganizeBuilder({ models, llm }));
     builder.registerBuilder(pruneBuilder());
 
     for await (const _ of builder.run()) {
