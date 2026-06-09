@@ -1,11 +1,21 @@
-import { loggerOf, ProjectBuilder, type RegisteredBuilder } from "@statewalker/resources-workspace";
+import {
+  type BuilderUpdate,
+  type EmittedUpdate,
+  loggerOf,
+  ProjectBuilder,
+  type RegisteredBuilder,
+} from "@statewalker/resources-workspace";
 import { llmOf, wikiConfigOf } from "../llm/index.js";
+import { toBatch } from "../util/batch.js";
 import { ResourceTextContentCache, WikiPageEmbeddings, WikiPageSummary } from "./page-adapters.js";
 import { SUMMARIZED_SIGNAL } from "./summarizer.js";
 import type { DocumentEmbeddings } from "./types.js";
 
 export const EMBED_BUILDER_ID = "Embedder";
 export const EMBEDDED_SIGNAL = "embedded";
+
+/** Documents embedded in parallel per batch (each already batches its sections). */
+const EMBED_BATCH_SIZE = 8;
 
 /**
  * The embedder builder: consumes `summarized`, batch-embeds each document's section
@@ -27,10 +37,18 @@ export function embedderBuilder(opts: { force?: boolean } = {}): RegisteredBuild
       const cfg = wikiConfigOf(project);
       const model = cfg.embedModel;
       const dimensionality = cfg.dimensionality;
-      for await (const u of builder.readUpdates({
+      const source = builder.readUpdates({
         signal: SUMMARIZED_SIGNAL,
         cell: EMBED_BUILDER_ID,
-      })) {
+      });
+      for await (const batch of toBatch(source, EMBED_BATCH_SIZE)) {
+        for (const emitted of await Promise.all(batch.map(handleEntry))) yield* emitted;
+        if (!(await builder.yieldControl())) return false;
+      }
+      return true;
+
+      async function handleEntry(u: BuilderUpdate): Promise<EmittedUpdate[]> {
+        const out: EmittedUpdate[] = [];
         try {
           const resource = await project.getProjectResource(u.uri);
           const summary = await resource?.requireAdapter(WikiPageSummary).get();
@@ -70,18 +88,18 @@ export function embedderBuilder(opts: { force?: boolean } = {}): RegisteredBuild
               sections: keys,
             };
             await resource.requireAdapter(WikiPageEmbeddings).write(meta, vecs);
-            yield { signal: EMBEDDED_SIGNAL, uri: u.uri, stamp: u.stamp };
+            out.push({ signal: EMBEDDED_SIGNAL, uri: u.uri, stamp: u.stamp });
           }
         } catch (error) {
           log.error("embedding failed; skipping document", {
             uri: u.uri,
             error: error instanceof Error ? error.message : String(error),
           });
+        } finally {
+          await u.handled();
         }
-        await u.handled();
-        if (!(await builder.yieldControl())) return false;
+        return out;
       }
-      return true;
     },
   };
 }

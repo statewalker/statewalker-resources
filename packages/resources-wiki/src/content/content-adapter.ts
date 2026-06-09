@@ -5,6 +5,8 @@ import {
 } from "@statewalker/content-extractors";
 import {
   type Adaptable,
+  type BuilderUpdate,
+  type EmittedUpdate,
   loggerOf,
   ProjectBuilder,
   type RegisteredBuilder,
@@ -13,12 +15,16 @@ import {
   type ResourceRepository,
   SOURCES_SIGNAL,
 } from "@statewalker/resources-workspace";
+import { toBatch } from "../util/batch.js";
 
 /** Signal emitted for each resource whose text content is available/changed. */
 export const CONTENT_SIGNAL = "content";
 
 /** Cell id of the content-extraction builder. */
 export const CONTENT_BUILDER_ID = "Extractor";
+
+/** Resources whose content is extracted in parallel per batch. */
+const CONTENT_BATCH_SIZE = 16;
 
 export interface ContentExtractionOptions {
   /** Maps a resource path to a text extractor. Defaults to `createDefaultRegistry()`. */
@@ -78,7 +84,9 @@ export function registerContentExtraction(
   return repository.register("", ContentAdapter, (adaptable: Adaptable) => {
     const resource = adaptable as Resource;
     const extractor = registry.get(resource.url) ?? fallback;
-    return extractor ? new ContentAdapter(resource, { registry, fallback }) : null;
+    return extractor
+      ? new ContentAdapter(resource, { registry, fallback })
+      : null;
   });
 }
 
@@ -94,19 +102,35 @@ export function contentBuilder(): RegisteredBuilder {
     async *handler(project) {
       const builder = project.requireAdapter(ProjectBuilder);
       const log = loggerOf(project, CONTENT_BUILDER_ID);
-      for await (const u of builder.readUpdates({
+      const source = builder.readUpdates({
         signal: SOURCES_SIGNAL,
         cell: CONTENT_BUILDER_ID,
-      })) {
-        const resource = await project.getProjectResource(u.uri);
-        if (resource?.getAdapter(ContentAdapter)) {
-          log.debug("extracting content", { uri: u.uri });
-          yield { signal: CONTENT_SIGNAL, uri: u.uri, stamp: u.stamp };
-        }
-        await u.handled();
+      });
+      for await (const batch of toBatch(source, CONTENT_BATCH_SIZE)) {
+        for (const emitted of await Promise.all(batch.map(handleEntry)))
+          yield* emitted;
         if (!(await builder.yieldControl())) return false;
       }
       return true;
+
+      async function handleEntry(u: BuilderUpdate): Promise<EmittedUpdate[]> {
+        const out: EmittedUpdate[] = [];
+        try {
+          const resource = await project.getProjectResource(u.uri);
+          if (resource?.getAdapter(ContentAdapter)) {
+            log.debug("extracting content", { uri: u.uri });
+            out.push({ signal: CONTENT_SIGNAL, uri: u.uri, stamp: u.stamp });
+          }
+        } catch (error) {
+          log.error("content detection failed; skipping document", {
+            uri: u.uri,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        } finally {
+          await u.handled();
+        }
+        return out;
+      }
     },
   };
 }

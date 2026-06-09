@@ -1,5 +1,12 @@
-import { loggerOf, ProjectBuilder, type RegisteredBuilder } from "@statewalker/resources-workspace";
+import {
+  type BuilderUpdate,
+  type EmittedUpdate,
+  loggerOf,
+  ProjectBuilder,
+  type RegisteredBuilder,
+} from "@statewalker/resources-workspace";
 import { llmOf, wikiConfigOf } from "../llm/index.js";
+import { toBatch } from "../util/batch.js";
 import { ResourceTextContentCache, WikiPageGraph, WikiPageSummary } from "./page-adapters.js";
 import { fillCorpusPurpose, GRAPH_EXTRACTOR_SYSTEM_PROMPT } from "./prompts.js";
 import { documentGraphSchema, graphExtractorInputSchema } from "./schemas.js";
@@ -9,6 +16,9 @@ import type { DocumentGraph, SectionGraph } from "./types.js";
 /** Signal emitted for each page whose graph is available/changed. */
 export const GRAPH_SIGNAL = "graph";
 export const GRAPH_BUILDER_ID = "GraphExtractor";
+
+/** Documents whose graph is extracted in parallel per batch. */
+const GRAPH_BATCH_SIZE = 8;
 
 /**
  * Deterministic post-extraction validation. Drops any triple that is not
@@ -52,10 +62,18 @@ export function graphBuilder(opts: { force?: boolean } = {}): RegisteredBuilder 
       const llm = llmOf(project);
       const cfg = wikiConfigOf(project);
       const system = fillCorpusPurpose(GRAPH_EXTRACTOR_SYSTEM_PROMPT, cfg.corpusPurpose);
-      for await (const u of builder.readUpdates({
+      const source = builder.readUpdates({
         signal: SUMMARIZED_SIGNAL,
         cell: GRAPH_BUILDER_ID,
-      })) {
+      });
+      for await (const batch of toBatch(source, GRAPH_BATCH_SIZE)) {
+        for (const emitted of await Promise.all(batch.map(handleEntry))) yield* emitted;
+        if (!(await builder.yieldControl())) return false;
+      }
+      return true;
+
+      async function handleEntry(u: BuilderUpdate): Promise<EmittedUpdate[]> {
+        const out: EmittedUpdate[] = [];
         try {
           const resource = await project.getProjectResource(u.uri);
           const summary = await resource?.requireAdapter(WikiPageSummary).get();
@@ -82,7 +100,7 @@ export function graphBuilder(opts: { force?: boolean } = {}): RegisteredBuilder 
               sections: filterUnknownSubjects(output.sections),
             };
             await resource.requireAdapter(WikiPageGraph).write(graph);
-            yield { signal: GRAPH_SIGNAL, uri: u.uri, stamp: u.stamp };
+            out.push({ signal: GRAPH_SIGNAL, uri: u.uri, stamp: u.stamp });
           }
         } catch (error) {
           // Surface the underlying validation cause (and finishReason) when the
@@ -94,11 +112,11 @@ export function graphBuilder(opts: { force?: boolean } = {}): RegisteredBuilder 
             cause: detail?.cause instanceof Error ? detail.cause.message : undefined,
             finishReason: detail?.finishReason,
           });
+        } finally {
+          await u.handled();
         }
-        await u.handled();
-        if (!(await builder.yieldControl())) return false;
+        return out;
       }
-      return true;
     },
   };
 }

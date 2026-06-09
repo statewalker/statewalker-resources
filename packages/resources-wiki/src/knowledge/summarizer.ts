@@ -1,6 +1,13 @@
-import { loggerOf, ProjectBuilder, type RegisteredBuilder } from "@statewalker/resources-workspace";
+import {
+  type BuilderUpdate,
+  type EmittedUpdate,
+  loggerOf,
+  ProjectBuilder,
+  type RegisteredBuilder,
+} from "@statewalker/resources-workspace";
 import { CONTENT_SIGNAL } from "../content/index.js";
 import { llmOf, wikiConfigOf } from "../llm/index.js";
+import { toBatch } from "../util/batch.js";
 import { ResourceTextContentCache, WikiPageSummary } from "./page-adapters.js";
 import { fillCorpusPurpose, SUMMARIZER_SYSTEM_PROMPT } from "./prompts.js";
 import { documentSummarySchema, summarizerInputSchema } from "./schemas.js";
@@ -11,6 +18,9 @@ export const SUMMARIZED_SIGNAL = "summarized";
 
 /** Cell id of the summarizer builder. */
 export const SUMMARIZE_BUILDER_ID = "Summarizer";
+
+/** Documents summarized in parallel per batch. */
+const SUMMARIZE_BATCH_SIZE = 8;
 
 function numberedLines(text: string): Array<[number, string]> {
   return text.split("\n").map((line, index) => [index, line]);
@@ -32,10 +42,18 @@ export function summarizeBuilder(opts: { force?: boolean } = {}): RegisteredBuil
       const llm = llmOf(project);
       const cfg = wikiConfigOf(project);
       const system = fillCorpusPurpose(SUMMARIZER_SYSTEM_PROMPT, cfg.corpusPurpose);
-      for await (const u of builder.readUpdates({
+      const source = builder.readUpdates({
         signal: CONTENT_SIGNAL,
         cell: SUMMARIZE_BUILDER_ID,
-      })) {
+      });
+      for await (const batch of toBatch(source, SUMMARIZE_BATCH_SIZE)) {
+        for (const emitted of await Promise.all(batch.map(handleEntry))) yield* emitted;
+        if (!(await builder.yieldControl())) return false;
+      }
+      return true;
+
+      async function handleEntry(u: BuilderUpdate): Promise<EmittedUpdate[]> {
+        const out: EmittedUpdate[] = [];
         try {
           const resource = await project.getProjectResource(u.uri);
           if (resource) {
@@ -75,7 +93,7 @@ export function summarizeBuilder(opts: { force?: boolean } = {}): RegisteredBuil
             // re-run — e.g. after invalidating this stage — re-feeds downstream
             // (meta/graph/embedder) without re-summarizing.
             if (produced || fresh) {
-              yield { signal: SUMMARIZED_SIGNAL, uri: u.uri, stamp: u.stamp };
+              out.push({ signal: SUMMARIZED_SIGNAL, uri: u.uri, stamp: u.stamp });
             }
           }
         } catch (error) {
@@ -86,11 +104,11 @@ export function summarizeBuilder(opts: { force?: boolean } = {}): RegisteredBuil
             uri: u.uri,
             error: error instanceof Error ? error.message : String(error),
           });
+        } finally {
+          await u.handled();
         }
-        await u.handled();
-        if (!(await builder.yieldControl())) return false;
+        return out;
       }
-      return true;
     },
   };
 }

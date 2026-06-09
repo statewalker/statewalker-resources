@@ -8,6 +8,7 @@ import {
   SOURCES_REMOVED_SIGNAL,
 } from "@statewalker/resources-workspace";
 import { type LlmApi, llmOf, wikiConfigOf } from "../llm/index.js";
+import { toBatch } from "../util/batch.js";
 import { WikiOutlierIndex, WikiTopicIndex } from "./indexes.js";
 import { META_REMOVED_TOPICS_SIGNAL, META_SIGNAL } from "./meta.js";
 import { WikiPageMeta } from "./page-adapters.js";
@@ -23,6 +24,9 @@ import type { ClassReference, DocumentMeta, GlobalOutlier, GlobalTopic } from ".
 
 export const REORGANIZE_BUILDER_ID = "IndexReorganizer";
 export const PRUNE_BUILDER_ID = "IndexPruner";
+
+/** Orphaned artifact directories pruned in parallel per batch. */
+const PRUNE_BATCH_SIZE = 16;
 
 /** A leftover per-doc topic group (one distinct new key) the LLM must place. */
 interface CandidateGroup {
@@ -314,25 +318,30 @@ export function pruneBuilder(): RegisteredBuilder {
     id: PRUNE_BUILDER_ID,
     inputs: [SOURCES_REMOVED_SIGNAL],
     outputs: [],
-    // biome-ignore lint/correctness/useYield: deletes artifacts; emits no signal
     async *handler(project) {
       const builder = project.requireAdapter(ProjectBuilder);
       const log = loggerOf(project, PRUNE_BUILDER_ID);
       const repository = project.repository as ResourceRepository;
-      for await (const u of builder.readUpdates({
+      const source = builder.readUpdates({
         signal: SOURCES_REMOVED_SIGNAL,
         cell: PRUNE_BUILDER_ID,
-      })) {
+      });
+      for await (const batch of toBatch(source, PRUNE_BATCH_SIZE)) {
+        await Promise.all(batch.map(handleEntry));
+        if (!(await builder.yieldControl())) return false;
+      }
+      return true;
+
+      async function handleEntry(u: BuilderUpdate): Promise<void> {
         try {
           log.debug("pruning artifacts", { uri: u.uri });
           await repository.filesApi.remove(pageDirPath(project.resource, u.uri));
         } catch {
           // already gone — fine
+        } finally {
+          await u.handled();
         }
-        await u.handled();
-        if (!(await builder.yieldControl())) return false;
       }
-      return true;
     },
   };
 }

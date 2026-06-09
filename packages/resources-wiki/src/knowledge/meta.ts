@@ -1,5 +1,12 @@
-import { loggerOf, ProjectBuilder, type RegisteredBuilder } from "@statewalker/resources-workspace";
+import {
+  type BuilderUpdate,
+  type EmittedUpdate,
+  loggerOf,
+  ProjectBuilder,
+  type RegisteredBuilder,
+} from "@statewalker/resources-workspace";
 import { llmOf, wikiConfigOf } from "../llm/index.js";
+import { toBatch } from "../util/batch.js";
 import { collectExistingClasses } from "./indexes.js";
 import { ResourceTextContentCache, WikiPageMeta, WikiPageSummary } from "./page-adapters.js";
 import { fillCorpusPurpose, META_EXTRACTOR_SYSTEM_PROMPT } from "./prompts.js";
@@ -12,6 +19,9 @@ export const META_SIGNAL = "meta";
 /** Tombstone signal: a `<uri>#<topicKey>` declaration was removed (drives the pruner). */
 export const META_REMOVED_TOPICS_SIGNAL = "meta-removed-topics";
 export const META_BUILDER_ID = "MetaExtractor";
+
+/** Documents whose meta is extracted in parallel per batch. */
+const META_BATCH_SIZE = 8;
 
 /**
  * The meta builder: consumes `summarized`, extracts per-document topic/outlier
@@ -31,10 +41,18 @@ export function metaBuilder(opts: { force?: boolean } = {}): RegisteredBuilder {
       const cfg = wikiConfigOf(project);
       const system = fillCorpusPurpose(META_EXTRACTOR_SYSTEM_PROMPT, cfg.corpusPurpose);
       const existingClasses = await collectExistingClasses(project);
-      for await (const u of builder.readUpdates({
+      const source = builder.readUpdates({
         signal: SUMMARIZED_SIGNAL,
         cell: META_BUILDER_ID,
-      })) {
+      });
+      for await (const batch of toBatch(source, META_BATCH_SIZE)) {
+        for (const emitted of await Promise.all(batch.map(handleEntry))) yield* emitted;
+        if (!(await builder.yieldControl())) return false;
+      }
+      return true;
+
+      async function handleEntry(u: BuilderUpdate): Promise<EmittedUpdate[]> {
+        const out: EmittedUpdate[] = [];
         try {
           const resource = await project.getProjectResource(u.uri);
           const summary = await resource?.requireAdapter(WikiPageSummary).get();
@@ -69,11 +87,11 @@ export function metaBuilder(opts: { force?: boolean } = {}): RegisteredBuilder {
               const newKeys = new Set(meta.topics.map((t) => t.key));
               for (const t of prior.topics) {
                 if (!newKeys.has(t.key)) {
-                  yield {
+                  out.push({
                     signal: META_REMOVED_TOPICS_SIGNAL,
                     uri: `${u.uri}#${t.key}`,
                     stamp: u.stamp,
-                  };
+                  });
                 }
               }
             }
@@ -81,18 +99,18 @@ export function metaBuilder(opts: { force?: boolean } = {}): RegisteredBuilder {
           // Emit on a hash-skip too (valid meta already on disk), so a re-run after
           // invalidation re-feeds the index reorganizer without re-extracting.
           if (resource && (produced || fresh)) {
-            yield { signal: META_SIGNAL, uri: u.uri, stamp: u.stamp };
+            out.push({ signal: META_SIGNAL, uri: u.uri, stamp: u.stamp });
           }
         } catch (error) {
           log.error("meta extraction failed; skipping document", {
             uri: u.uri,
             error: error instanceof Error ? error.message : String(error),
           });
+        } finally {
+          await u.handled();
         }
-        await u.handled();
-        if (!(await builder.yieldControl())) return false;
+        return out;
       }
-      return true;
     },
   };
 }
