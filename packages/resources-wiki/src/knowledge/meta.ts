@@ -1,4 +1,4 @@
-import { ProjectBuilder, type RegisteredBuilder } from "@statewalker/resources-workspace";
+import { loggerOf, ProjectBuilder, type RegisteredBuilder } from "@statewalker/resources-workspace";
 import { resolveModel } from "../llm/index.js";
 import { collectExistingClasses } from "./indexes.js";
 import { ResourceTextContentCache, WikiPageMeta, WikiPageSummary } from "./page-adapters.js";
@@ -28,6 +28,7 @@ export function metaBuilder(deps: KnowledgeBuilderDeps): RegisteredBuilder {
     outputs: [META_SIGNAL, META_REMOVED_TOPICS_SIGNAL],
     async *handler(project) {
       const builder = project.requireAdapter(ProjectBuilder);
+      const log = loggerOf(project, META_BUILDER_ID);
       const existingClasses = await collectExistingClasses(project);
       for await (const u of builder.readUpdates({
         signal: SUMMARIZED_SIGNAL,
@@ -39,6 +40,7 @@ export function metaBuilder(deps: KnowledgeBuilderDeps): RegisteredBuilder {
         const prior = await resource?.requireAdapter(WikiPageMeta).get();
         const fresh = !!prior && !!hash && prior.sourceHash === hash.hash;
         if (resource && summary && (deps.force || !fresh)) {
+          log.info("extracting meta", { uri: u.uri });
           const { output } = await deps.llm.generate({
             name: "extract-document-meta",
             description:

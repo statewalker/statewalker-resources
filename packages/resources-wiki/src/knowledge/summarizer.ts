@@ -1,4 +1,4 @@
-import { ProjectBuilder, type RegisteredBuilder } from "@statewalker/resources-workspace";
+import { loggerOf, ProjectBuilder, type RegisteredBuilder } from "@statewalker/resources-workspace";
 import { CONTENT_SIGNAL } from "../content/index.js";
 import { type LlmCaller, type LlmModels, resolveModel } from "../llm/index.js";
 import { ResourceTextContentCache, WikiPageSummary } from "./page-adapters.js";
@@ -39,6 +39,7 @@ export function summarizeBuilder(deps: KnowledgeBuilderDeps): RegisteredBuilder 
     outputs: [SUMMARIZED_SIGNAL],
     async *handler(project) {
       const builder = project.requireAdapter(ProjectBuilder);
+      const log = loggerOf(project, SUMMARIZE_BUILDER_ID);
       for await (const u of builder.readUpdates({
         signal: CONTENT_SIGNAL,
         cell: SUMMARIZE_BUILDER_ID,
@@ -52,6 +53,7 @@ export function summarizeBuilder(deps: KnowledgeBuilderDeps): RegisteredBuilder 
           const existing = await resource.requireAdapter(WikiPageSummary).get();
           // Skip the (costly) summarization LLM call when the source is unchanged.
           if (text && (deps.force || existing?.sourceHash !== hash)) {
+            log.info("summarizing", { uri: u.uri });
             const { output } = await deps.llm.generate({
               name: "summarize-document",
               description:

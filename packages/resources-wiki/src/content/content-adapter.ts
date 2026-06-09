@@ -5,6 +5,7 @@ import {
 } from "@statewalker/content-extractors";
 import {
   type Adaptable,
+  loggerOf,
   ProjectBuilder,
   type RegisteredBuilder,
   type Resource,
@@ -92,12 +93,14 @@ export function contentBuilder(): RegisteredBuilder {
     outputs: [CONTENT_SIGNAL],
     async *handler(project) {
       const builder = project.requireAdapter(ProjectBuilder);
+      const log = loggerOf(project, CONTENT_BUILDER_ID);
       for await (const u of builder.readUpdates({
         signal: SOURCES_SIGNAL,
         cell: CONTENT_BUILDER_ID,
       })) {
         const resource = await project.getProjectResource(u.uri);
         if (resource?.getAdapter(ContentAdapter)) {
+          log.debug("extracting content", { uri: u.uri });
           yield { signal: CONTENT_SIGNAL, uri: u.uri, stamp: u.stamp };
         }
         await u.handled();

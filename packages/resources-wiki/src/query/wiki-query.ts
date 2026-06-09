@@ -1,5 +1,6 @@
 import {
   type Adaptable,
+  loggerOf,
   Project,
   ResourceAdapter,
   type ResourceRepository,
@@ -172,14 +173,38 @@ export class WikiQuery extends ResourceAdapter {
   }
 
   private async run(question: string, _opts: QueryOptions, progress: QueryProgress): Promise<void> {
-    progress.stage("reformulate");
-    const { output: routes } = await this.opts.llm.generate({
+    const log = loggerOf(this.project, "WikiQuery");
+    const startedAt = Date.now();
+    let inputTokens = 0;
+    let outputTokens = 0;
+    // Open a stage: record it on `progress`, log its start, and return a `done`
+    // fn logging the stage's elapsed time plus any measured metrics (counts, tokens).
+    const stage = (name: string): ((metrics?: Record<string, unknown>) => void) => {
+      progress.stage(name);
+      const t0 = Date.now();
+      log.info(`stage start: ${name}`, { stage: name });
+      return (metrics = {}) =>
+        log.info(`stage done: ${name}`, { stage: name, ms: Date.now() - t0, ...metrics });
+    };
+
+    log.info("query received", { question });
+    const doneReformulate = stage("reformulate");
+    const { output: routes, usage: reformUsage } = await this.opts.llm.generate({
       name: "reformulate-query",
       model: resolveModel(this.opts.models, "query"),
       system: REFORMULATE_PROMPT,
       input: { question },
       inputSchema: reformulationInputSchema,
       outputSchema: reformulationSchema,
+    });
+    inputTokens += reformUsage.inputTokens;
+    outputTokens += reformUsage.outputTokens;
+    doneReformulate({
+      inputTokens: reformUsage.inputTokens,
+      outputTokens: reformUsage.outputTokens,
+      textQueries: routes.textQueries ?? [],
+      semanticQueries: routes.semanticQueries ?? [],
+      topicDescent: routes.topicDescent ?? [],
     });
 
     const hasAny =
@@ -188,13 +213,16 @@ export class WikiQuery extends ResourceAdapter {
         (routes.topicDescent?.length ?? 0) >
       0;
 
-    progress.stage("retrieve");
+    const doneRetrieve = stage("retrieve");
     const hits = new Map<string, EvidenceSection>();
     const add = async (uri: string, sectionKey: string) => {
       const id = `${uri}#${sectionKey}`;
       if (hits.has(id)) return;
       const ev = await this.evidenceFor(uri, sectionKey);
-      if (ev) hits.set(id, ev);
+      if (ev) {
+        hits.set(id, ev);
+        log.debug("evidence section retrieved", { uri, sectionKey });
+      }
     };
 
     // Search branch (FTS for text queries, vector for semantic; default = both on the question).
@@ -203,43 +231,90 @@ export class WikiQuery extends ResourceAdapter {
     const search = this.project.getAdapter(SearchAdapter);
     if (search) {
       for (const q of textQueries) {
-        for (const m of await search.search({ query: q, modes: ["fts"] })) {
+        const matches = await search.search({ query: q, modes: ["fts"] });
+        log.debug("full-text search", { query: q, documents: matches.length });
+        for (const m of matches) {
           for (const s of m.sections) await add(m.uri, s.sectionKey);
         }
       }
       for (const q of semanticQueries) {
-        for (const m of await search.search({ query: q, modes: ["vector"] })) {
+        const matches = await search.search({ query: q, modes: ["vector"] });
+        log.debug("semantic search", { query: q, documents: matches.length });
+        for (const m of matches) {
           for (const s of m.sections) await add(m.uri, s.sectionKey);
         }
       }
+    } else {
+      log.debug("no search index available — skipping FTS/vector branch");
     }
 
     // Topic-descent branch: match topics, descend to their referenced documents' sections.
     const topicTerms = routes.topicDescent ?? (hasAny ? [] : [question]);
+    let topicsExplored = 0;
+    let topicsMatched = 0;
+    let documentsExplored = 0;
     if (topicTerms.length > 0) {
+      log.debug("topic descent", { terms: topicTerms });
       const index = this.project.requireAdapter(WikiTopicIndex);
       for await (const topic of index.list()) {
+        topicsExplored++;
         const match = topicTerms.some(
           (t) =>
             topic.key === t ||
             topic.name.toLowerCase().includes(t.toLowerCase()) ||
             t.toLowerCase().includes(topic.key),
         );
+        log.debug("index topic", { key: topic.key, name: topic.name, matched: match });
         if (!match) continue;
+        topicsMatched++;
+        log.debug("matched topic", { key: topic.key, references: topic.references.length });
         for (const ref of topic.references) {
-          // References are `<uri>#<topicKey>` — descend to the source document.
-          const docUri = parseWikiUri(ref.uri).path;
+          // References are `<uri>#<docTopicKey>`: descend only into the sections that
+          // source's own topic declaration covers, not every section of the document.
+          const { path: docUri, section: docTopicKey } = parseWikiUri(ref.uri);
           const resource = await this.project.getProjectResource(docUri);
-          const summary = await resource?.requireAdapter(WikiPageSummary).get();
-          for (const section of summary?.sections ?? []) await add(docUri, section.key);
+          if (!resource) continue;
+          const docTopic = docTopicKey
+            ? (await resource.requireAdapter(WikiPageMeta).get())?.topics.find(
+                (t) => t.key === docTopicKey,
+              )
+            : undefined;
+          // Fall back to all sections when the document-specific topic can't be resolved.
+          const sectionKeys =
+            docTopic?.sectionKeys ??
+            (await resource.requireAdapter(WikiPageSummary).get())?.sections.map((s) => s.key) ??
+            [];
+          documentsExplored++;
+          log.debug("exploring document", {
+            uri: docUri,
+            docTopic: docTopicKey ?? null,
+            sections: sectionKeys.length,
+          });
+          for (const sectionKey of sectionKeys) await add(docUri, sectionKey);
         }
       }
     }
 
     progress.evidence = [...hits.values()];
+    doneRetrieve({
+      ftsQueries: textQueries.length,
+      semanticQueries: semanticQueries.length,
+      topicsExplored,
+      topicsMatched,
+      documentsExplored,
+      evidenceSections: progress.evidence.length,
+    });
 
     if (progress.evidence.length === 0) {
-      progress.stage("respond");
+      const doneRespond = stage("respond");
+      doneRespond({ outcome: "no-evidence" });
+      log.info("query complete", {
+        ms: Date.now() - startedAt,
+        inputTokens,
+        outputTokens,
+        evidenceCount: 0,
+        outcome: "no-evidence",
+      });
       progress._finish({
         text: "No supporting evidence found.",
         citations: [],
@@ -253,9 +328,10 @@ export class WikiQuery extends ResourceAdapter {
     }
 
     const { topics, outliers } = await this.aggregateClasses(progress.evidence);
+    log.debug("aggregated classes", { topics: topics.length, outliers: outliers.length });
 
-    progress.stage("respond");
-    const { output: composed } = await this.opts.llm.generate({
+    const doneRespond = stage("respond");
+    const { output: composed, usage: composeUsage } = await this.opts.llm.generate({
       name: "compose-answer",
       model: resolveModel(this.opts.models, "query"),
       system: COMPOSE_PROMPT,
@@ -263,9 +339,17 @@ export class WikiQuery extends ResourceAdapter {
       inputSchema: composeInputSchema,
       outputSchema: composeSchema,
     });
+    inputTokens += composeUsage.inputTokens;
+    outputTokens += composeUsage.outputTokens;
+    doneRespond({
+      inputTokens: composeUsage.inputTokens,
+      outputTokens: composeUsage.outputTokens,
+      evidenceSections: progress.evidence.length,
+      claimedCitations: composed.citations.length,
+    });
 
     // Verify: keep only citations that resolve to a retrieved (uri, sectionKey).
-    progress.stage("verify");
+    const doneVerify = stage("verify");
     const evidenceIds = new Set(progress.evidence.map((e) => `${e.uri}#${e.sectionKey}`));
     const caveats: string[] = [];
     const citations = composed.citations.filter((c) => {
@@ -279,7 +363,20 @@ export class WikiQuery extends ResourceAdapter {
     if (citations.length < composed.citations.length) {
       caveats.push("Some citations did not resolve to retrieved evidence and were dropped.");
     }
+    doneVerify({
+      citations: citations.length,
+      dropped: composed.citations.length - citations.length,
+    });
 
+    log.info("query complete", {
+      ms: Date.now() - startedAt,
+      inputTokens,
+      outputTokens,
+      evidenceCount: progress.evidence.length,
+      citations: citations.length,
+      topics: topics.length,
+      outliers: outliers.length,
+    });
     progress._finish({
       text: composed.text,
       citations,

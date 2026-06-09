@@ -9,6 +9,7 @@ import { newVectorAccess, type VectorBlock, type VectorQuery } from "@statewalke
 import {
   type Adaptable,
   concatPath,
+  loggerOf,
   ProjectBuilder,
   type RegisteredBuilder,
   type Resource,
@@ -248,12 +249,16 @@ export function searchBuilder(opts: { inputSignal: string }): RegisteredBuilder 
     async *handler(project) {
       const builder = project.requireAdapter(ProjectBuilder);
       const search = project.requireAdapter(SearchAdapter);
+      const log = loggerOf(project, "SearchIndexer");
       for await (const u of builder.readUpdates({
         signal: inputSignal,
         cell: "SearchIndexer",
       })) {
         const resource = await project.getProjectResource(u.uri);
-        if (resource) await search.indexPage(resource, u.uri);
+        if (resource) {
+          log.debug("indexing page", { uri: u.uri });
+          await search.indexPage(resource, u.uri);
+        }
         await u.handled();
         if (!(await builder.yieldControl())) return false;
       }
@@ -261,6 +266,7 @@ export function searchBuilder(opts: { inputSignal: string }): RegisteredBuilder 
         signal: SOURCES_REMOVED_SIGNAL,
         cell: "SearchIndexer",
       })) {
+        log.debug("removing page", { uri: u.uri });
         await search.removePage(u.uri);
         await u.handled();
         if (!(await builder.yieldControl())) return false;
