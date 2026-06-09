@@ -12,8 +12,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   contentBuilder,
   type DocumentSummaryOutput,
-  type LlmCaller,
-  type LlmModels,
+  type LlmApi,
   ResourceTextContentCache,
   registerContentExtraction,
   registerKnowledgeAdapters,
@@ -21,6 +20,7 @@ import {
   summarizeBuilder,
   WikiPageSummary,
 } from "../../src/index.js";
+import { registerStubLlm } from "../util/stub-llm.js";
 
 const SUMMARY_OUTPUT: DocumentSummaryOutput = {
   title: "About Acme",
@@ -31,24 +31,15 @@ const SUMMARY_OUTPUT: DocumentSummaryOutput = {
   ],
 };
 
-/** Stub caller: records the last input and returns a fixed summary. */
-function stubLlm(): { llm: LlmCaller; lastInput: () => unknown } {
-  let captured: unknown;
+/** Stub generation: records the last input and returns a fixed summary. */
+let capturedInput: unknown;
+const generateObject: LlmApi["generateObject"] = async (spec) => {
+  capturedInput = spec.input;
   return {
-    lastInput: () => captured,
-    llm: {
-      generate: async (spec) => {
-        captured = spec.input;
-        return {
-          output: SUMMARY_OUTPUT as unknown as never,
-          usage: { inputTokens: 0, outputTokens: 0 },
-        };
-      },
-    },
+    output: SUMMARY_OUTPUT as unknown as never,
+    usage: { inputTokens: 0, outputTokens: 0 },
   };
-}
-
-const models = { default: {} } as unknown as LlmModels;
+};
 
 function newRepository(files: Record<string, string>) {
   const repository = new ResourceRepository({ filesApi: new MemFilesApi({ initialFiles: files }) });
@@ -60,6 +51,7 @@ function newRepository(files: Record<string, string>) {
   repository.register(ResourceRepository, Workspace);
   registerContentExtraction(repository);
   registerKnowledgeAdapters(repository);
+  registerStubLlm(repository, { generateObject });
   return repository;
 }
 
@@ -88,11 +80,10 @@ describe("summarizeBuilder", () => {
   it("summarizes content into Sections, writes them, and emits summarized", async () => {
     const project = await getProject();
     const builder = project.requireAdapter(ProjectBuilder);
-    const { llm, lastInput } = stubLlm();
 
     const summarizedUris: string[] = [];
     builder.registerBuilder(contentBuilder());
-    builder.registerBuilder(summarizeBuilder({ models, llm }));
+    builder.registerBuilder(summarizeBuilder());
     builder.registerBuilder({
       id: "summarized-sink",
       inputs: [SUMMARIZED_SIGNAL],
@@ -116,7 +107,7 @@ describe("summarizeBuilder", () => {
     }
 
     // The summarizer received the document's numbered raw lines.
-    const input = lastInput() as { uri: string; rawLines: Array<[number, string]> };
+    const input = capturedInput as { uri: string; rawLines: Array<[number, string]> };
     expect(input.uri).toBe("a.md");
     expect(input.rawLines[0]).toEqual([0, "# Acme"]);
 

@@ -4,16 +4,17 @@ import { MemFilesApi } from "@statewalker/webrun-files-mem";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   type DocumentMetaOutput,
-  type LlmCaller,
-  type LlmModels,
+  type LlmApi,
   ResourceTextContentCache,
   registerWiki,
+  WikiPageEmbeddings,
   WikiPageGraph,
   WikiPageMeta,
   WikiPageSummary,
   WikiTopicIndex,
   wireWikiProject,
 } from "../../src/index.js";
+import { makeStubLlm } from "../util/stub-llm.js";
 
 const DIM = 2;
 const embed: EmbedFn = async (text) => {
@@ -28,52 +29,49 @@ function tracker() {
   const calls: { name: string; uri?: string }[] = [];
   // Per-uri topic key, mutable so a test can drop a topic on re-ingest.
   const topicByUri = new Map<string, string>();
-  const llm: LlmCaller = {
-    generate: async (spec) => {
-      const input = spec.input as { uri?: string; rawLines?: [number, string][] };
-      calls.push({ name: spec.name, uri: input.uri });
-      const out = (o: unknown) => ({
-        output: o as never,
-        usage: { inputTokens: 0, outputTokens: 0 },
-      });
-      switch (spec.name) {
-        case "summarize-document": {
-          // Title echoes the FIRST raw line so a stale cache is detectable.
-          const firstLine = input.rawLines?.[0]?.[1] ?? "";
-          return out({
-            title: firstLine,
-            summary: firstLine,
-            sections: [{ key: "s", title: "S", startLine: 0, endLine: 0, summary: firstLine }],
-          });
-        }
-        case "extract-document-meta": {
-          const uri = input.uri ?? "";
-          const key = topicByUri.get(uri);
-          const meta: DocumentMetaOutput = key
-            ? {
-                topics: [{ key, name: key, description: "d", sectionKeys: ["s"], brief: "b" }],
-                outliers: [],
-              }
-            : { topics: [], outliers: [] };
-          return out(meta);
-        }
-        case "extract-document-graph":
-          return out({
-            sections: [{ sectionKey: "s", entities: [], statements: [], relations: [] }],
-          });
-        case "reorganize-topics":
-          // No semantic merges — the reorganizer's fallback coins each leftover
-          // by its own key, preserving the mechanical exact-key behaviour.
-          return out({ actions: [] });
-        default:
-          throw new Error(`unexpected ${spec.name}`);
+  const generateObject: LlmApi["generateObject"] = async (spec) => {
+    const input = spec.input as { uri?: string; rawLines?: [number, string][] };
+    calls.push({ name: spec.name, uri: input.uri });
+    const out = (o: unknown) => ({
+      output: o as never,
+      usage: { inputTokens: 0, outputTokens: 0 },
+    });
+    switch (spec.name) {
+      case "summarize-document": {
+        // Title echoes the FIRST raw line so a stale cache is detectable.
+        const firstLine = input.rawLines?.[0]?.[1] ?? "";
+        return out({
+          title: firstLine,
+          summary: firstLine,
+          sections: [{ key: "s", title: "S", startLine: 0, endLine: 0, summary: firstLine }],
+        });
       }
-    },
+      case "extract-document-meta": {
+        const uri = input.uri ?? "";
+        const key = topicByUri.get(uri);
+        const meta: DocumentMetaOutput = key
+          ? {
+              topics: [{ key, name: key, description: "d", sectionKeys: ["s"], brief: "b" }],
+              outliers: [],
+            }
+          : { topics: [], outliers: [] };
+        return out(meta);
+      }
+      case "extract-document-graph":
+        return out({
+          sections: [{ sectionKey: "s", entities: [], statements: [], relations: [] }],
+        });
+      case "reorganize-topics":
+        // No semantic merges — the reorganizer's fallback coins each leftover
+        // by its own key, preserving the mechanical exact-key behaviour.
+        return out({ actions: [] });
+      default:
+        throw new Error(`unexpected ${spec.name}`);
+    }
   };
+  const llm = makeStubLlm({ generateObject, embed });
   return { llm, calls, topicByUri };
 }
-
-const models = { default: {} } as unknown as LlmModels;
 
 async function writeFile(filesApi: FilesApi, path: string, text: string): Promise<void> {
   await filesApi.write(
@@ -97,10 +95,13 @@ describe("wiki builders — incremental behaviour", () => {
     t = tracker();
     t.topicByUri.set("a.md", "alpha");
     t.topicByUri.set("b.md", "bravo");
-    registerWiki(repository, { models, llm: t.llm, embed, embedModel: "fx", dimensionality: DIM });
+    registerWiki(repository, {
+      llm: t.llm,
+      models: { default: "fx-model" },
+      embedModel: "fx",
+      dimensionality: DIM,
+    });
   });
-
-  const deps = () => ({ models, llm: t.llm, embed, embedModel: "fx", dimensionality: DIM });
 
   async function openProject() {
     const workspace = repository.requireAdapter<Workspace>(Workspace);
@@ -110,7 +111,7 @@ describe("wiki builders — incremental behaviour", () => {
   }
 
   async function scan(project: Awaited<ReturnType<typeof openProject>>) {
-    const builder = wireWikiProject(project, deps());
+    const builder = wireWikiProject(project);
     for await (const _ of builder.run()) {
       // drain
     }
@@ -184,7 +185,7 @@ describe("wiki builders — incremental behaviour", () => {
     const project = await openProject();
     await scan(project);
 
-    const builder = wireWikiProject(project, deps());
+    const builder = wireWikiProject(project);
     await builder.restartFrom("Summarizer");
     t.calls.length = 0;
     for await (const _ of builder.run()) {
@@ -194,11 +195,38 @@ describe("wiki builders — incremental behaviour", () => {
     expect(t.calls.filter((c) => c.name === "summarize-document")).toEqual([]);
   });
 
+  it("invalidating Summarizer rebuilds a deleted downstream artifact without LLM (emit-on-skip)", async () => {
+    const project = await openProject();
+    await scan(project);
+    const resource = await project.getProjectResource("a.md");
+    // The Embedder produced embeddings during the scan: JSON metadata + the Arrow
+    // sidecar, decoded back into per-section Float32Array vectors.
+    expect(await resource?.requireAdapter(WikiPageEmbeddings).getMeta("fx", DIM)).toBeDefined();
+    const vectors = await resource?.requireAdapter(WikiPageEmbeddings).getVectors("fx", DIM);
+    expect(vectors?.get("s")).toBeInstanceOf(Float32Array);
+    expect(vectors?.get("s")?.length).toBe(DIM);
+
+    // Delete the embeddings artifact, then invalidate Summarizer (+ downstream).
+    await filesApi.remove("proj/.project/pages/a.md/embeddings.fx.2.json");
+    const builder = wireWikiProject(project);
+    await builder.restartFrom("Summarizer");
+    t.calls.length = 0;
+    for await (const _ of builder.run()) {
+      // drain
+    }
+
+    // No LLM: summaries/meta are fresh and hash-skip. But the Summarizer re-emits
+    // `summarized`, so the Embedder re-runs and recreates the deleted embeddings.
+    expect(t.calls.filter((c) => c.name === "summarize-document")).toEqual([]);
+    expect(t.calls.filter((c) => c.name === "extract-document-meta")).toEqual([]);
+    expect(await resource?.requireAdapter(WikiPageEmbeddings).getMeta("fx", DIM)).toBeDefined();
+  });
+
   it("force re-derives every page even when the source hash is unchanged", async () => {
     const project = await openProject();
     await scan(project);
 
-    const builder = wireWikiProject(project, { ...deps(), force: true });
+    const builder = wireWikiProject(project, { force: true });
     await builder.restartFrom("Summarizer");
     t.calls.length = 0;
     for await (const _ of builder.run()) {

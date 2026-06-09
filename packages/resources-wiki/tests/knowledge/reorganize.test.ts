@@ -13,8 +13,7 @@ import {
   contentBuilder,
   type DocumentMetaOutput,
   type DocumentSummaryOutput,
-  type LlmCaller,
-  type LlmModels,
+  type LlmApi,
   metaBuilder,
   pruneBuilder,
   registerContentExtraction,
@@ -23,6 +22,7 @@ import {
   summarizeBuilder,
   WikiTopicIndex,
 } from "../../src/index.js";
+import { registerStubLlm } from "../util/stub-llm.js";
 
 const SUMMARY: DocumentSummaryOutput = {
   title: "Doc",
@@ -42,18 +42,12 @@ const META: DocumentMetaOutput = {
   outliers: [],
 };
 
-function stubLlm(): LlmCaller {
-  return {
-    generate: async (spec) => {
-      const usage = { inputTokens: 0, outputTokens: 0 };
-      if (spec.name === "summarize-document") return { output: SUMMARY as unknown as never, usage };
-      if (spec.name === "extract-document-meta") return { output: META as unknown as never, usage };
-      throw new Error(`unexpected call ${spec.name}`);
-    },
-  };
-}
-
-const models = { default: {} } as unknown as LlmModels;
+const generateObject: LlmApi["generateObject"] = async (spec) => {
+  const usage = { inputTokens: 0, outputTokens: 0 };
+  if (spec.name === "summarize-document") return { output: SUMMARY as unknown as never, usage };
+  if (spec.name === "extract-document-meta") return { output: META as unknown as never, usage };
+  throw new Error(`unexpected call ${spec.name}`);
+};
 
 describe("reorganizer + pruner", () => {
   let repository: ResourceRepository;
@@ -70,18 +64,18 @@ describe("reorganizer + pruner", () => {
     repository.register(ResourceRepository, Workspace);
     registerContentExtraction(repository);
     registerKnowledgeAdapters(repository);
+    registerStubLlm(repository, { generateObject });
   });
 
   it("aggregates a topic across documents, and prunes a removed source's reference", async () => {
     const workspace = repository.requireAdapter<Workspace>(Workspace);
     const project = (await workspace.getProject("proj"))!;
     const builder = project.requireAdapter(ProjectBuilder);
-    const llm = stubLlm();
 
     builder.registerBuilder(contentBuilder());
-    builder.registerBuilder(summarizeBuilder({ models, llm }));
-    builder.registerBuilder(metaBuilder({ models, llm }));
-    builder.registerBuilder(reorganizeBuilder({ models, llm }));
+    builder.registerBuilder(summarizeBuilder());
+    builder.registerBuilder(metaBuilder());
+    builder.registerBuilder(reorganizeBuilder());
     builder.registerBuilder(pruneBuilder());
 
     for await (const _ of builder.run()) {

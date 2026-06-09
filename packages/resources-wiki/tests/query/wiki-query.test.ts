@@ -14,8 +14,7 @@ import {
   type DocumentMetaOutput,
   type DocumentSummaryOutput,
   type EmbedFn,
-  type LlmCaller,
-  type LlmModels,
+  type LlmApi,
   metaBuilder,
   type ReformulationOutput,
   registerContentExtraction,
@@ -27,6 +26,7 @@ import {
   summarizeBuilder,
   WikiQuery,
 } from "../../src/index.js";
+import { registerStubLlm } from "../util/stub-llm.js";
 
 const DIM = 2;
 const embed: EmbedFn = async (text) => {
@@ -72,54 +72,48 @@ const META: DocumentMetaOutput = {
 // Reformulation routing is controlled per-test by mutating this.
 let reformulation: ReformulationOutput = {};
 
-function stubLlm(): LlmCaller {
-  return {
-    generate: async (spec) => {
-      const usage = { inputTokens: 0, outputTokens: 0 };
-      if (spec.name === "summarize-document") return { output: SUMMARY as unknown as never, usage };
-      if (spec.name === "extract-document-meta") return { output: META as unknown as never, usage };
-      if (spec.name === "reformulate-query")
-        return { output: reformulation as unknown as never, usage };
-      if (spec.name === "select-topics") {
-        // Stand in for the selection LLM: pick the available classes named by the
-        // test's `topicDescent` route (mirrors a model judging relevance).
-        const input = spec.input as {
-          availableTopics: { key: string }[];
-          availableOutliers: { key: string }[];
-        };
-        const want = new Set(reformulation.topicDescent ?? []);
-        return {
-          output: {
-            topicKeys: input.availableTopics.map((t) => t.key).filter((k) => want.has(k)),
-            outlierKeys: input.availableOutliers.map((o) => o.key).filter((k) => want.has(k)),
-          } as unknown as never,
-          usage,
-        };
-      }
-      if (spec.name === "compose-answer") {
-        // Cite whatever evidence we were given (first section), as a [[wiki://...]] marker.
-        const input = spec.input as {
-          evidence: { uri: string; sectionKey: string }[];
-        };
-        const first = input.evidence[0];
-        const text = first
-          ? `Answer. [[wiki://proj/${first.uri}#${first.sectionKey}]]`
-          : "No supporting evidence found.";
-        return {
-          output: {
-            text,
-            citations: first ? [`wiki://proj/${first.uri}#${first.sectionKey}`] : [],
-            suggestions: [],
-          } as unknown as never,
-          usage,
-        };
-      }
-      throw new Error(`unexpected call ${spec.name}`);
-    },
-  };
-}
-
-const models = { default: {} } as unknown as LlmModels;
+const generateObject: LlmApi["generateObject"] = async (spec) => {
+  const usage = { inputTokens: 0, outputTokens: 0 };
+  if (spec.name === "summarize-document") return { output: SUMMARY as unknown as never, usage };
+  if (spec.name === "extract-document-meta") return { output: META as unknown as never, usage };
+  if (spec.name === "reformulate-query")
+    return { output: reformulation as unknown as never, usage };
+  if (spec.name === "select-topics") {
+    // Stand in for the selection LLM: pick the available classes named by the
+    // test's `topicDescent` route (mirrors a model judging relevance).
+    const input = spec.input as {
+      availableTopics: { key: string }[];
+      availableOutliers: { key: string }[];
+    };
+    const want = new Set(reformulation.topicDescent ?? []);
+    return {
+      output: {
+        topicKeys: input.availableTopics.map((t) => t.key).filter((k) => want.has(k)),
+        outlierKeys: input.availableOutliers.map((o) => o.key).filter((k) => want.has(k)),
+      } as unknown as never,
+      usage,
+    };
+  }
+  if (spec.name === "compose-answer") {
+    // Cite whatever evidence we were given (first section), as a [[wiki://...]] marker.
+    const input = spec.input as {
+      evidence: { uri: string; sectionKey: string }[];
+    };
+    const first = input.evidence[0];
+    const text = first
+      ? `Answer. [[wiki://proj/${first.uri}#${first.sectionKey}]]`
+      : "No supporting evidence found.";
+    return {
+      output: {
+        text,
+        citations: first ? [`wiki://proj/${first.uri}#${first.sectionKey}`] : [],
+        suggestions: [],
+      } as unknown as never,
+      usage,
+    };
+  }
+  throw new Error(`unexpected call ${spec.name}`);
+};
 
 async function buildProject() {
   const filesApi = new MemFilesApi({
@@ -132,25 +126,30 @@ async function buildProject() {
   repository.register("", Project);
   repository.register("", ProjectBuilder);
   repository.register(ResourceRepository, Workspace);
-  const llm = stubLlm();
   registerContentExtraction(repository);
   registerKnowledgeAdapters(repository);
+  registerStubLlm(repository, {
+    generateObject,
+    embed,
+    embedModel: "fixture",
+    dimensionality: DIM,
+  });
   registerSearch(repository, {
     embed,
     model: "fixture",
     dimensionality: DIM,
     blocks: async () => [],
   });
-  registerQuery(repository, { models, llm });
+  registerQuery(repository);
 
   const workspace = repository.requireAdapter<Workspace>(Workspace);
   const project = await workspace.getProject("proj", true);
   if (!project) throw new Error("no project");
   const builder = project.requireAdapter(ProjectBuilder);
   builder.registerBuilder(contentBuilder());
-  builder.registerBuilder(summarizeBuilder({ models, llm }));
-  builder.registerBuilder(metaBuilder({ models, llm }));
-  builder.registerBuilder(reorganizeBuilder({ models, llm }));
+  builder.registerBuilder(summarizeBuilder());
+  builder.registerBuilder(metaBuilder());
+  builder.registerBuilder(reorganizeBuilder());
   // Index sections for search: fts over summary, vector over summary.
   builder.registerBuilder(searchBuilder({ inputSignal: "summarized" }));
   for await (const _ of builder.run()) {

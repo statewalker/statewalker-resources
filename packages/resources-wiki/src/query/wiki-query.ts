@@ -1,5 +1,4 @@
 import {
-  type Adaptable,
   loggerOf,
   Project,
   ResourceAdapter,
@@ -13,7 +12,7 @@ import {
   WikiPageSummary,
 } from "../knowledge/page-adapters.js";
 import type { DocumentMeta, GlobalOutlier, GlobalTopic } from "../knowledge/types.js";
-import { type LlmCaller, type LlmModels, resolveModel } from "../llm/index.js";
+import { llmOf, wikiConfigOf } from "../llm/index.js";
 import { SearchAdapter } from "../search/index.js";
 import { parseWikiUri, toCanonical } from "../uri/wiki-uri.js";
 
@@ -184,23 +183,17 @@ interface QueryOptions {
   depthCeiling?: QueryDepth;
 }
 
-interface AdapterOptions extends Record<string, unknown> {
-  models: LlmModels;
-  llm: LlmCaller;
-  corpusPurpose?: string;
-}
-
 /**
  * Routed question answering on a project's wiki. `ask` returns a `QueryProgress`
  * synchronously and fills it asynchronously: an LLM reformulation step routes the
  * question to the search (FTS/vector) and/or topic-descent branches, their section
  * evidence is merged and deduped by `(uri, sectionKey)`, and a grounded, cited answer
  * is composed. A question with no supporting evidence yields a terminal negative answer.
+ *
+ * Models come from the project adapters: `LlmProjectAdapter` (generic generation) and
+ * `WikiLlmConfiguration` (which model each stage uses) — see `llmOf` / `wikiConfigOf`.
  */
 export class WikiQuery extends ResourceAdapter {
-  private get opts(): AdapterOptions {
-    return this.options as AdapterOptions;
-  }
   private get project(): Project {
     return this.resource.requireAdapter<Project>(Project);
   }
@@ -213,6 +206,8 @@ export class WikiQuery extends ResourceAdapter {
 
   private async run(question: string, _opts: QueryOptions, progress: QueryProgress): Promise<void> {
     const log = loggerOf(this.project, "WikiQuery");
+    const llm = llmOf(this.project);
+    const cfg = wikiConfigOf(this.project);
     const startedAt = Date.now();
     let inputTokens = 0;
     let outputTokens = 0;
@@ -228,9 +223,9 @@ export class WikiQuery extends ResourceAdapter {
 
     log.info("query received", { question });
     const doneReformulate = stage("reformulate");
-    const { output: routes, usage: reformUsage } = await this.opts.llm.generate({
+    const { output: routes, usage: reformUsage } = await llm.generateObject({
       name: "reformulate-query",
-      model: resolveModel(this.opts.models, "query"),
+      model: cfg.modelFor("query"),
       system: REFORMULATE_PROMPT,
       input: { question },
       inputSchema: reformulationInputSchema,
@@ -311,11 +306,11 @@ export class WikiQuery extends ResourceAdapter {
           name: c.name,
           description: c.description,
         });
-        const { output: sel, usage: selUsage } = await this.opts.llm.generate({
+        const { output: sel, usage: selUsage } = await llm.generateObject({
           name: "select-topics",
           description:
             "Select the topic + outlier class keys worth searching for the subject, from key/name/description only.",
-          model: resolveModel(this.opts.models, "query"),
+          model: cfg.modelFor("query"),
           system: TOPIC_SELECT_PROMPT,
           input: {
             subject: question,
@@ -403,9 +398,9 @@ export class WikiQuery extends ResourceAdapter {
     log.debug("aggregated classes", { topics: topics.length, outliers: outliers.length });
 
     const doneRespond = stage("respond");
-    const { output: composed, usage: composeUsage } = await this.opts.llm.generate({
+    const { output: composed, usage: composeUsage } = await llm.generateObject({
       name: "compose-answer",
-      model: resolveModel(this.opts.models, "query"),
+      model: cfg.modelFor("query"),
       system: COMPOSE_PROMPT,
       input: { question, evidence: progress.evidence },
       inputSchema: composeInputSchema,
@@ -522,17 +517,11 @@ export class WikiQuery extends ResourceAdapter {
   }
 }
 
-/** Register `WikiQuery` (project-level) with its models / caller. */
-export function registerQuery(
-  repository: ResourceRepository,
-  deps: { models: LlmModels; llm: LlmCaller; corpusPurpose?: string },
-): () => void {
-  return repository.register("", WikiQuery, (adaptable: Adaptable) => {
-    const options: AdapterOptions = {
-      models: deps.models,
-      llm: deps.llm,
-      corpusPurpose: deps.corpusPurpose,
-    };
-    return new WikiQuery(adaptable, options);
-  });
+/**
+ * Register `WikiQuery` (project-level). Models are read at query time from the
+ * `LlmProjectAdapter` + `WikiLlmConfiguration` project adapters, so no model deps
+ * are injected here.
+ */
+export function registerQuery(repository: ResourceRepository): () => void {
+  return repository.register("", WikiQuery);
 }

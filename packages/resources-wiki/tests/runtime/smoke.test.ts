@@ -10,8 +10,7 @@ import {
   type DocumentGraphOutput,
   type DocumentMetaOutput,
   type DocumentSummaryOutput,
-  type LlmCaller,
-  type LlmModels,
+  type LlmApi,
   type ReformulationOutput,
   registerWiki,
   WikiPageSummary,
@@ -19,6 +18,7 @@ import {
   WikiTopicIndex,
   wireWikiProject,
 } from "../../src/index.js";
+import { makeStubLlm } from "../util/stub-llm.js";
 
 const DIM = 2;
 const embed: EmbedFn = async (text) => {
@@ -26,8 +26,6 @@ const embed: EmbedFn = async (text) => {
   if (text.toLowerCase().includes("acme")) v[0] = 1;
   return v;
 };
-const embedBatch = async (texts: string[]): Promise<Float32Array[]> =>
-  Promise.all(texts.map((t) => embed(t)));
 
 const SUMMARY: DocumentSummaryOutput = {
   title: "Acme",
@@ -53,47 +51,43 @@ const GRAPH: DocumentGraphOutput = {
 };
 const REFORMULATION: ReformulationOutput = { topicDescent: ["companies"] };
 
-const llm: LlmCaller = {
-  generate: async (spec) => {
-    const usage = { inputTokens: 0, outputTokens: 0 };
-    const out = (o: unknown) => ({ output: o as never, usage });
-    switch (spec.name) {
-      case "summarize-document":
-        return out(SUMMARY);
-      case "extract-document-meta":
-        return out(META);
-      case "extract-document-graph":
-        return out(GRAPH);
-      case "reformulate-query":
-        return out(REFORMULATION);
-      case "select-topics": {
-        const input = spec.input as {
-          availableTopics: { key: string }[];
-          availableOutliers: { key: string }[];
-        };
-        const want = new Set(REFORMULATION.topicDescent ?? []);
-        return out({
-          topicKeys: input.availableTopics.map((t) => t.key).filter((k) => want.has(k)),
-          outlierKeys: input.availableOutliers.map((o) => o.key).filter((k) => want.has(k)),
-        });
-      }
-      case "compose-answer": {
-        const ev = (spec.input as { evidence: { uri: string; sectionKey: string }[] }).evidence[0];
-        return out({
-          text: ev
-            ? `Acme is a company. [[wiki://proj/${ev.uri}#${ev.sectionKey}]]`
-            : "No evidence.",
-          citations: ev ? [`wiki://proj/${ev.uri}#${ev.sectionKey}`] : [],
-          suggestions: [],
-        });
-      }
-      default:
-        throw new Error(`unexpected ${spec.name}`);
+const generateObject: LlmApi["generateObject"] = async (spec) => {
+  const usage = { inputTokens: 0, outputTokens: 0 };
+  const out = (o: unknown) => ({ output: o as never, usage });
+  switch (spec.name) {
+    case "summarize-document":
+      return out(SUMMARY);
+    case "extract-document-meta":
+      return out(META);
+    case "extract-document-graph":
+      return out(GRAPH);
+    case "reformulate-query":
+      return out(REFORMULATION);
+    case "select-topics": {
+      const input = spec.input as {
+        availableTopics: { key: string }[];
+        availableOutliers: { key: string }[];
+      };
+      const want = new Set(REFORMULATION.topicDescent ?? []);
+      return out({
+        topicKeys: input.availableTopics.map((t) => t.key).filter((k) => want.has(k)),
+        outlierKeys: input.availableOutliers.map((o) => o.key).filter((k) => want.has(k)),
+      });
     }
-  },
+    case "compose-answer": {
+      const ev = (spec.input as { evidence: { uri: string; sectionKey: string }[] }).evidence[0];
+      return out({
+        text: ev ? `Acme is a company. [[wiki://proj/${ev.uri}#${ev.sectionKey}]]` : "No evidence.",
+        citations: ev ? [`wiki://proj/${ev.uri}#${ev.sectionKey}`] : [],
+        suggestions: [],
+      });
+    }
+    default:
+      throw new Error(`unexpected ${spec.name}`);
+  }
 };
 
-const models = { default: {} } as unknown as LlmModels;
+const llm = makeStubLlm({ generateObject, embed });
 
 async function writeFile(filesApi: FilesApi, path: string, text: string): Promise<void> {
   await filesApi.write(
@@ -121,10 +115,8 @@ describe.each(["mem", "node"] as const)("registerWiki end-to-end (%s FilesApi)",
     const filesApi = await makeFilesApi(kind);
     const repository = new ResourceRepository({ filesApi });
     registerWiki(repository, {
-      models,
       llm,
-      embed,
-      embedBatch,
+      models: { default: "fixture-model" },
       embedModel: "fixture",
       dimensionality: DIM,
     });
@@ -134,14 +126,7 @@ describe.each(["mem", "node"] as const)("registerWiki end-to-end (%s FilesApi)",
     if (!project) throw new Error("no project");
     await writeFile(filesApi, "proj/a.md", "Acme is a company.");
 
-    const builder = wireWikiProject(project, {
-      models,
-      llm,
-      embed,
-      embedBatch,
-      embedModel: "fixture",
-      dimensionality: DIM,
-    });
+    const builder = wireWikiProject(project);
     for await (const _ of builder.run()) {
       // drain
     }

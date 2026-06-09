@@ -16,8 +16,7 @@ import {
   type DocumentSummaryOutput,
   filterUnknownSubjects,
   graphBuilder,
-  type LlmCaller,
-  type LlmModels,
+  type LlmApi,
   metaBuilder,
   registerContentExtraction,
   registerKnowledgeAdapters,
@@ -26,6 +25,7 @@ import {
   WikiPageGraph,
   WikiPageMeta,
 } from "../../src/index.js";
+import { registerStubLlm } from "../util/stub-llm.js";
 
 const SUMMARY: DocumentSummaryOutput = {
   title: "About Acme",
@@ -60,20 +60,13 @@ const GRAPH: DocumentGraphOutput = {
   ],
 };
 
-function stubLlm(): LlmCaller {
-  return {
-    generate: async (spec) => {
-      const usage = { inputTokens: 0, outputTokens: 0 };
-      if (spec.name === "summarize-document") return { output: SUMMARY as unknown as never, usage };
-      if (spec.name === "extract-document-meta") return { output: META as unknown as never, usage };
-      if (spec.name === "extract-document-graph")
-        return { output: GRAPH as unknown as never, usage };
-      throw new Error(`unexpected call ${spec.name}`);
-    },
-  };
-}
-
-const models = { default: {} } as unknown as LlmModels;
+const generateObject: LlmApi["generateObject"] = async (spec) => {
+  const usage = { inputTokens: 0, outputTokens: 0 };
+  if (spec.name === "summarize-document") return { output: SUMMARY as unknown as never, usage };
+  if (spec.name === "extract-document-meta") return { output: META as unknown as never, usage };
+  if (spec.name === "extract-document-graph") return { output: GRAPH as unknown as never, usage };
+  throw new Error(`unexpected call ${spec.name}`);
+};
 
 function newRepository(files: Record<string, string>) {
   const repository = new ResourceRepository({ filesApi: new MemFilesApi({ initialFiles: files }) });
@@ -85,6 +78,7 @@ function newRepository(files: Record<string, string>) {
   repository.register(ResourceRepository, Workspace);
   registerContentExtraction(repository);
   registerKnowledgeAdapters(repository);
+  registerStubLlm(repository, { generateObject });
   return repository;
 }
 
@@ -136,12 +130,11 @@ describe("meta + graph builders", () => {
     const workspace = repository.requireAdapter<Workspace>(Workspace);
     const project = (await workspace.getProject("proj"))!;
     const builder = project.requireAdapter(ProjectBuilder);
-    const llm = stubLlm();
 
     builder.registerBuilder(contentBuilder());
-    builder.registerBuilder(summarizeBuilder({ models, llm }));
-    builder.registerBuilder(metaBuilder({ models, llm }));
-    builder.registerBuilder(graphBuilder({ models, llm }));
+    builder.registerBuilder(summarizeBuilder());
+    builder.registerBuilder(metaBuilder());
+    builder.registerBuilder(graphBuilder());
 
     for await (const _ of builder.run()) {
       // drain

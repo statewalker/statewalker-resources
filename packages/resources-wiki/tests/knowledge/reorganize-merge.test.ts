@@ -12,8 +12,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   contentBuilder,
   type DocumentMetaOutput,
-  type LlmCaller,
-  type LlmModels,
+  type LlmApi,
   metaBuilder,
   pruneBuilder,
   type ReorganizeActions,
@@ -23,8 +22,7 @@ import {
   summarizeBuilder,
   WikiTopicIndex,
 } from "../../src/index.js";
-
-const models = { default: {} } as unknown as LlmModels;
+import { registerStubLlm } from "../util/stub-llm.js";
 
 interface TopicDecl {
   key: string;
@@ -41,43 +39,41 @@ function tracker() {
   const calls: string[] = [];
   const topicsByUri = new Map<string, TopicDecl[]>();
   let reorganize: ReorganizeFn = () => ({ actions: [] });
-  const llm: LlmCaller = {
-    generate: async (spec) => {
-      calls.push(spec.name);
-      const out = (o: unknown) => ({
-        output: o as never,
-        usage: { inputTokens: 0, outputTokens: 0 },
+  const generateObject: LlmApi["generateObject"] = async (spec) => {
+    calls.push(spec.name);
+    const out = (o: unknown) => ({
+      output: o as never,
+      usage: { inputTokens: 0, outputTokens: 0 },
+    });
+    const input = spec.input as { uri?: string };
+    if (spec.name === "summarize-document") {
+      return out({
+        title: "t",
+        summary: "s",
+        sections: [{ key: "s", title: "S", startLine: 0, endLine: 0, summary: "x" }],
       });
-      const input = spec.input as { uri?: string };
-      if (spec.name === "summarize-document") {
-        return out({
-          title: "t",
-          summary: "s",
-          sections: [{ key: "s", title: "S", startLine: 0, endLine: 0, summary: "x" }],
-        });
-      }
-      if (spec.name === "extract-document-meta") {
-        const decls = topicsByUri.get(input.uri ?? "") ?? [];
-        const meta: DocumentMetaOutput = {
-          topics: decls.map((d) => ({
-            key: d.key,
-            name: d.name,
-            description: d.description,
-            sectionKeys: ["s"],
-            brief: "b",
-          })),
-          outliers: [],
-        };
-        return out(meta);
-      }
-      if (spec.name === "reorganize-topics") {
-        return out(reorganize(spec.input as Parameters<ReorganizeFn>[0]));
-      }
-      throw new Error(`unexpected ${spec.name}`);
-    },
+    }
+    if (spec.name === "extract-document-meta") {
+      const decls = topicsByUri.get(input.uri ?? "") ?? [];
+      const meta: DocumentMetaOutput = {
+        topics: decls.map((d) => ({
+          key: d.key,
+          name: d.name,
+          description: d.description,
+          sectionKeys: ["s"],
+          brief: "b",
+        })),
+        outliers: [],
+      };
+      return out(meta);
+    }
+    if (spec.name === "reorganize-topics") {
+      return out(reorganize(spec.input as Parameters<ReorganizeFn>[0]));
+    }
+    throw new Error(`unexpected ${spec.name}`);
   };
   return {
-    llm,
+    generateObject,
     calls,
     topicsByUri,
     setReorganize: (f: ReorganizeFn) => {
@@ -99,13 +95,14 @@ async function setup() {
   registerKnowledgeAdapters(repository);
 
   const t = tracker();
+  registerStubLlm(repository, { generateObject: t.generateObject });
   const workspace = repository.requireAdapter<Workspace>(Workspace);
   const project = await workspace.getProject("proj", true);
   const builder = project.requireAdapter(ProjectBuilder);
   builder.registerBuilder(contentBuilder());
-  builder.registerBuilder(summarizeBuilder({ models, llm: t.llm }));
-  builder.registerBuilder(metaBuilder({ models, llm: t.llm }));
-  builder.registerBuilder(reorganizeBuilder({ models, llm: t.llm }));
+  builder.registerBuilder(summarizeBuilder());
+  builder.registerBuilder(metaBuilder());
+  builder.registerBuilder(reorganizeBuilder());
   builder.registerBuilder(pruneBuilder());
 
   const write = async (path: string, text: string) => {

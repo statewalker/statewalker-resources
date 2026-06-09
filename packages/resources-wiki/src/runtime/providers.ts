@@ -1,13 +1,15 @@
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
-import type { EmbedFn } from "@statewalker/indexer-api";
-import { embed as aiEmbed } from "ai";
-import type { LlmModels } from "../llm/index.js";
+import type { LlmProvider, StageModelNames } from "../llm/index.js";
 
 export interface ResolvedProviders {
-  models: LlmModels;
-  embed: EmbedFn;
+  /** Provider capability for the generic `LlmProjectAdapter`. */
+  provider: LlmProvider;
+  /** Stage → model-name map for `WikiLlmConfiguration`. */
+  models: StageModelNames;
+  /** Embedding model name. */
   embedModel: string;
+  /** Embedding dimensionality. */
   dimensionality: number;
 }
 
@@ -18,10 +20,11 @@ function required(env: Record<string, string | undefined>, key: string): string 
 }
 
 /**
- * Resolve LLM models + embedding function from environment variables — the
+ * Resolve the LLM provider + model configuration from environment variables — the
  * composition-root boundary (adapters read no env). Selects a provider via
  * `WIKI_PROVIDER` (`openai` | `google`, default `openai`); model/embedding ids and
  * dimensionality are overridable via `WIKI_MODEL` / `WIKI_EMBED_MODEL` / `WIKI_EMBED_DIM`.
+ * The returned `provider` turns model *names* into runtime models for `LlmProjectAdapter`.
  */
 export function resolveProvidersFromEnv(
   env: Record<string, string | undefined>,
@@ -31,22 +34,24 @@ export function resolveProvidersFromEnv(
     const google = createGoogleGenerativeAI({
       apiKey: required(env, "GOOGLE_GENERATIVE_AI_API_KEY"),
     });
-    const embedModel = env.WIKI_EMBED_MODEL ?? "text-embedding-004";
-    const model = google.embeddingModel(embedModel);
     return {
-      models: { default: google(env.WIKI_MODEL ?? "gemini-2.5-flash") },
-      embed: async (text) => new Float32Array((await aiEmbed({ model, value: text })).embedding),
-      embedModel,
+      provider: {
+        languageModel: (name) => google(name),
+        textEmbeddingModel: (name) => google.embeddingModel(name),
+      },
+      models: { default: env.WIKI_MODEL ?? "gemini-2.5-flash" },
+      embedModel: env.WIKI_EMBED_MODEL ?? "text-embedding-004",
       dimensionality: Number(env.WIKI_EMBED_DIM ?? "768"),
     };
   }
   const openai = createOpenAI({ apiKey: required(env, "OPENAI_API_KEY") });
-  const embedModel = env.WIKI_EMBED_MODEL ?? "text-embedding-3-small";
-  const model = openai.embeddingModel(embedModel);
   return {
-    models: { default: openai(env.WIKI_MODEL ?? "gpt-4.1-mini") },
-    embed: async (text) => new Float32Array((await aiEmbed({ model, value: text })).embedding),
-    embedModel,
+    provider: {
+      languageModel: (name) => openai(name),
+      textEmbeddingModel: (name) => openai.embeddingModel(name),
+    },
+    models: { default: env.WIKI_MODEL ?? "gpt-4.1-mini" },
+    embedModel: env.WIKI_EMBED_MODEL ?? "text-embedding-3-small",
     dimensionality: Number(env.WIKI_EMBED_DIM ?? "1536"),
   };
 }

@@ -1,9 +1,8 @@
 import { loggerOf, ProjectBuilder, type RegisteredBuilder } from "@statewalker/resources-workspace";
-import { resolveModel } from "../llm/index.js";
+import { llmOf, wikiConfigOf } from "../llm/index.js";
 import { ResourceTextContentCache, WikiPageGraph, WikiPageSummary } from "./page-adapters.js";
 import { fillCorpusPurpose, GRAPH_EXTRACTOR_SYSTEM_PROMPT } from "./prompts.js";
 import { documentGraphSchema, graphExtractorInputSchema } from "./schemas.js";
-import type { KnowledgeBuilderDeps } from "./summarizer.js";
 import { SUMMARIZED_SIGNAL } from "./summarizer.js";
 import type { DocumentGraph, SectionGraph } from "./types.js";
 
@@ -42,8 +41,7 @@ export function filterUnknownSubjects(sections: SectionGraph[]): SectionGraph[] 
  * `DocumentGraph` via `WikiPageGraph`, and emits `graph`. Lifts wiki-runtime's
  * GraphExtractor (without the LLM validation-retry loop).
  */
-export function graphBuilder(deps: KnowledgeBuilderDeps): RegisteredBuilder {
-  const system = fillCorpusPurpose(GRAPH_EXTRACTOR_SYSTEM_PROMPT, deps.corpusPurpose);
+export function graphBuilder(opts: { force?: boolean } = {}): RegisteredBuilder {
   return {
     id: GRAPH_BUILDER_ID,
     inputs: [SUMMARIZED_SIGNAL],
@@ -51,6 +49,9 @@ export function graphBuilder(deps: KnowledgeBuilderDeps): RegisteredBuilder {
     async *handler(project) {
       const builder = project.requireAdapter(ProjectBuilder);
       const log = loggerOf(project, GRAPH_BUILDER_ID);
+      const llm = llmOf(project);
+      const cfg = wikiConfigOf(project);
+      const system = fillCorpusPurpose(GRAPH_EXTRACTOR_SYSTEM_PROMPT, cfg.corpusPurpose);
       for await (const u of builder.readUpdates({
         signal: SUMMARIZED_SIGNAL,
         cell: GRAPH_BUILDER_ID,
@@ -61,18 +62,17 @@ export function graphBuilder(deps: KnowledgeBuilderDeps): RegisteredBuilder {
           const hash = await resource?.requireAdapter(ResourceTextContentCache).getRawMeta();
           const prior = await resource?.requireAdapter(WikiPageGraph).get();
           const fresh = !!prior && !!hash && prior.sourceHash === hash.hash;
-          if (resource && summary && (deps.force || !fresh)) {
+          if (resource && summary && (opts.force || !fresh)) {
             log.info("extracting graph", { uri: u.uri });
-            const { output } = await deps.llm.generate({
+            const { output } = await llm.generateObject({
               name: "extract-document-graph",
               description:
                 "Per-section structured signal: entities plus [subject, predicate, object] statements (object is a literal) and relations (object is an entity). Subject is always an entity.value.",
-              model: resolveModel(deps.models, "graph"),
+              model: cfg.modelFor("graph"),
               system,
               input: { uri: u.uri, sections: summary.sections },
               inputSchema: graphExtractorInputSchema,
               outputSchema: documentGraphSchema,
-              abortSignal: deps.abortSignal,
             });
 
             const graph: DocumentGraph = {

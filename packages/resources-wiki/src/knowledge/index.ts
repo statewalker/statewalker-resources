@@ -2,11 +2,13 @@ import type { ResourceRepository } from "@statewalker/resources-workspace";
 import { WikiOutlierIndex, WikiTopicIndex } from "./indexes.js";
 import {
   ResourceTextContentCache,
+  WikiPageEmbeddings,
   WikiPageGraph,
   WikiPageMeta,
   WikiPageSummary,
 } from "./page-adapters.js";
 
+export { EMBED_BUILDER_ID, EMBEDDED_SIGNAL, embedderBuilder } from "./embedder.js";
 export { filterUnknownSubjects, GRAPH_BUILDER_ID, GRAPH_SIGNAL, graphBuilder } from "./graph.js";
 export {
   collectExistingClasses,
@@ -21,6 +23,7 @@ export {
 } from "./meta.js";
 export {
   ResourceTextContentCache,
+  WikiPageEmbeddings,
   WikiPageGraph,
   WikiPageMeta,
   WikiPageSummary,
@@ -37,7 +40,6 @@ export {
   PRUNE_BUILDER_ID,
   pruneBuilder,
   REORGANIZE_BUILDER_ID,
-  type ReorganizeBuilderDeps,
   reorganizeBuilder,
 } from "./reorganize.js";
 export {
@@ -57,12 +59,12 @@ export {
   summarizerInputSchema,
 } from "./schemas.js";
 export {
-  type KnowledgeBuilderDeps,
   SUMMARIZE_BUILDER_ID,
   SUMMARIZED_SIGNAL,
   summarizeBuilder,
 } from "./summarizer.js";
 export type {
+  DocumentEmbeddings,
   DocumentGraph,
   DocumentMeta,
   DocumentOutlier,
@@ -87,6 +89,7 @@ export function registerKnowledgeAdapters(repository: ResourceRepository): () =>
     repository.register("", WikiPageSummary),
     repository.register("", WikiPageMeta),
     repository.register("", WikiPageGraph),
+    repository.register("", WikiPageEmbeddings),
     repository.register("", WikiTopicIndex),
     repository.register("", WikiOutlierIndex),
   ];

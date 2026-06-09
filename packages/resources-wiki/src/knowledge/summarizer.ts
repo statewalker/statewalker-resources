@@ -1,6 +1,6 @@
 import { loggerOf, ProjectBuilder, type RegisteredBuilder } from "@statewalker/resources-workspace";
 import { CONTENT_SIGNAL } from "../content/index.js";
-import { type LlmCaller, type LlmModels, resolveModel } from "../llm/index.js";
+import { llmOf, wikiConfigOf } from "../llm/index.js";
 import { ResourceTextContentCache, WikiPageSummary } from "./page-adapters.js";
 import { fillCorpusPurpose, SUMMARIZER_SYSTEM_PROMPT } from "./prompts.js";
 import { documentSummarySchema, summarizerInputSchema } from "./schemas.js";
@@ -12,16 +12,6 @@ export const SUMMARIZED_SIGNAL = "summarized";
 /** Cell id of the summarizer builder. */
 export const SUMMARIZE_BUILDER_ID = "Summarizer";
 
-export interface KnowledgeBuilderDeps {
-  models: LlmModels;
-  llm: LlmCaller;
-  /** Steers the summariser's level of detail per section. */
-  corpusPurpose?: string;
-  abortSignal?: AbortSignal;
-  /** Re-run every stage even when the source hash is unchanged. */
-  force?: boolean;
-}
-
 function numberedLines(text: string): Array<[number, string]> {
   return text.split("\n").map((line, index) => [index, line]);
 }
@@ -31,8 +21,7 @@ function numberedLines(text: string): Array<[number, string]> {
  * per page, writes the `DocumentSummary` via `WikiPageSummary`, and emits
  * `summarized`. Lifts wiki-runtime's summarizer cell onto the adapter model.
  */
-export function summarizeBuilder(deps: KnowledgeBuilderDeps): RegisteredBuilder {
-  const system = fillCorpusPurpose(SUMMARIZER_SYSTEM_PROMPT, deps.corpusPurpose);
+export function summarizeBuilder(opts: { force?: boolean } = {}): RegisteredBuilder {
   return {
     id: SUMMARIZE_BUILDER_ID,
     inputs: [CONTENT_SIGNAL],
@@ -40,43 +29,63 @@ export function summarizeBuilder(deps: KnowledgeBuilderDeps): RegisteredBuilder 
     async *handler(project) {
       const builder = project.requireAdapter(ProjectBuilder);
       const log = loggerOf(project, SUMMARIZE_BUILDER_ID);
+      const llm = llmOf(project);
+      const cfg = wikiConfigOf(project);
+      const system = fillCorpusPurpose(SUMMARIZER_SYSTEM_PROMPT, cfg.corpusPurpose);
       for await (const u of builder.readUpdates({
         signal: CONTENT_SIGNAL,
         cell: SUMMARIZE_BUILDER_ID,
       })) {
-        const resource = await project.getProjectResource(u.uri);
-        if (resource) {
-          // Materialise raw.txt + raw.meta.json and learn the current source hash.
-          const { text, hash } = await resource
-            .requireAdapter(ResourceTextContentCache)
-            .refresh({ force: deps.force });
-          const existing = await resource.requireAdapter(WikiPageSummary).get();
-          // Skip the (costly) summarization LLM call when the source is unchanged.
-          if (text && (deps.force || existing?.sourceHash !== hash)) {
-            log.info("summarizing", { uri: u.uri });
-            const { output } = await deps.llm.generate({
-              name: "summarize-document",
-              description:
-                "Produce the L2 narrative summary of a single source — title, document summary, and 1–15 section entries each with a kebab-case key and a 0-indexed [startLine, endLine] range.",
-              model: resolveModel(deps.models, "summarize"),
-              system,
-              input: { uri: u.uri, rawLines: numberedLines(text) },
-              inputSchema: summarizerInputSchema,
-              outputSchema: documentSummarySchema,
-              abortSignal: deps.abortSignal,
-            });
+        try {
+          const resource = await project.getProjectResource(u.uri);
+          if (resource) {
+            // Materialise raw.txt + raw.meta.json and learn the current source hash.
+            const { text, hash } = await resource
+              .requireAdapter(ResourceTextContentCache)
+              .refresh({ force: opts.force });
+            const existing = await resource.requireAdapter(WikiPageSummary).get();
+            const fresh = !!existing && existing.sourceHash === hash;
+            let produced = false;
+            // Skip the (costly) summarization LLM call when the source is unchanged.
+            if (text && (opts.force || !fresh)) {
+              log.info("summarizing", { uri: u.uri });
+              const { output } = await llm.generateObject({
+                name: "summarize-document",
+                description:
+                  "Produce the L2 narrative summary of a single source — title, document summary, and 1–15 section entries each with a kebab-case key and a 0-indexed [startLine, endLine] range.",
+                model: cfg.modelFor("summarize"),
+                system,
+                input: { uri: u.uri, rawLines: numberedLines(text) },
+                inputSchema: summarizerInputSchema,
+                outputSchema: documentSummarySchema,
+              });
 
-            const summary: DocumentSummary = {
-              uri: u.uri,
-              generated: new Date().toISOString(),
-              sourceHash: hash,
-              title: output.title,
-              summary: output.summary,
-              sections: output.sections,
-            };
-            await resource.requireAdapter(WikiPageSummary).write(summary);
-            yield { signal: SUMMARIZED_SIGNAL, uri: u.uri, stamp: u.stamp };
+              const summary: DocumentSummary = {
+                uri: u.uri,
+                generated: new Date().toISOString(),
+                sourceHash: hash,
+                title: output.title,
+                summary: output.summary,
+                sections: output.sections,
+              };
+              await resource.requireAdapter(WikiPageSummary).write(summary);
+              produced = true;
+            }
+            // Emit on a hash-skip too (when a valid summary already exists), so a
+            // re-run — e.g. after invalidating this stage — re-feeds downstream
+            // (meta/graph/embedder) without re-summarizing.
+            if (produced || fresh) {
+              yield { signal: SUMMARIZED_SIGNAL, uri: u.uri, stamp: u.stamp };
+            }
           }
+        } catch (error) {
+          // Isolate a bad document (e.g. unparseable PDF): log and skip it rather
+          // than blocking the whole pipeline. `handled()` below marks it done so it
+          // is not retried until its source changes.
+          log.error("summarize failed; skipping document", {
+            uri: u.uri,
+            error: error instanceof Error ? error.message : String(error),
+          });
         }
         await u.handled();
         if (!(await builder.yieldControl())) return false;

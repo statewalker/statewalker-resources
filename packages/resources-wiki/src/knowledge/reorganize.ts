@@ -7,7 +7,7 @@ import {
   type ResourceRepository,
   SOURCES_REMOVED_SIGNAL,
 } from "@statewalker/resources-workspace";
-import { type LlmCaller, type LlmModels, resolveModel } from "../llm/index.js";
+import { type LlmApi, llmOf, wikiConfigOf } from "../llm/index.js";
 import { WikiOutlierIndex, WikiTopicIndex } from "./indexes.js";
 import { META_REMOVED_TOPICS_SIGNAL, META_SIGNAL } from "./meta.js";
 import { WikiPageMeta } from "./page-adapters.js";
@@ -23,14 +23,6 @@ import type { ClassReference, DocumentMeta, GlobalOutlier, GlobalTopic } from ".
 
 export const REORGANIZE_BUILDER_ID = "IndexReorganizer";
 export const PRUNE_BUILDER_ID = "IndexPruner";
-
-/** Dependencies for the reorganizer's LLM merge round. */
-export interface ReorganizeBuilderDeps {
-  models: LlmModels;
-  llm: LlmCaller;
-  corpusPurpose?: string;
-  abortSignal?: AbortSignal;
-}
 
 /** A leftover per-doc topic group (one distinct new key) the LLM must place. */
 interface CandidateGroup {
@@ -131,7 +123,8 @@ async function reorganizeTopics(
   project: Project,
   metas: Map<string, DocumentMeta>,
   touched: ReadonlySet<string>,
-  deps: ReorganizeBuilderDeps,
+  llm: LlmApi,
+  model: string,
   system: string,
   generated: string,
 ): Promise<number> {
@@ -191,16 +184,15 @@ async function reorganizeTopics(
         perDocUris: g.refs,
       })),
     };
-    const { output } = await deps.llm.generate({
+    const { output } = await llm.generateObject({
       name: "reorganize-topics",
       description:
         "Place leftover per-document topics into the global topic index: match an existing topic, extend one, or coin a new one.",
-      model: resolveModel(deps.models, "reorganize"),
+      model,
       system,
       input,
       inputSchema: reorganizerInputSchema,
       outputSchema: reorganizeActionsSchema,
-      abortSignal: deps.abortSignal,
     });
     actions = output.actions;
   }
@@ -268,8 +260,7 @@ async function readTouchedMetas(
  * topic go through one LLM round (match-existing / extend-existing / new-global)
  * so semantically-equal classes consolidate instead of duplicating.
  */
-export function reorganizeBuilder(deps: ReorganizeBuilderDeps): RegisteredBuilder {
-  const system = fillCorpusPurpose(REORGANIZER_SYSTEM_PROMPT, deps.corpusPurpose);
+export function reorganizeBuilder(): RegisteredBuilder {
   const inputs = [META_SIGNAL, META_REMOVED_TOPICS_SIGNAL, SOURCES_REMOVED_SIGNAL];
   return {
     id: REORGANIZE_BUILDER_ID,
@@ -279,6 +270,9 @@ export function reorganizeBuilder(deps: ReorganizeBuilderDeps): RegisteredBuilde
     async *handler(project) {
       const builder = project.requireAdapter(ProjectBuilder);
       const log = loggerOf(project, REORGANIZE_BUILDER_ID);
+      const llm = llmOf(project);
+      const cfg = wikiConfigOf(project);
+      const system = fillCorpusPurpose(REORGANIZER_SYSTEM_PROMPT, cfg.corpusPurpose);
       const pending: BuilderUpdate[] = [];
       const touched = new Set<string>();
       for (const signal of inputs) {
@@ -292,7 +286,15 @@ export function reorganizeBuilder(deps: ReorganizeBuilderDeps): RegisteredBuilde
         // run re-triggers the reorganization rather than silently skipping it.
         const metas = await readTouchedMetas(project, touched);
         const generated = new Date().toISOString();
-        const leftovers = await reorganizeTopics(project, metas, touched, deps, system, generated);
+        const leftovers = await reorganizeTopics(
+          project,
+          metas,
+          touched,
+          llm,
+          cfg.modelFor("reorganize"),
+          system,
+          generated,
+        );
         await reorganizeOutliers(project, metas, touched, generated);
         log.info("reorganized indexes", { touched: touched.size, leftovers });
         for (const u of pending) await u.handled();
