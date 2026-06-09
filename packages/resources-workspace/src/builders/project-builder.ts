@@ -1,12 +1,6 @@
-import {
-  type CellDefinition,
-  type CellHandler,
-  DataflowGraph,
-  readCellUpdates,
-  UpdatesManager,
-} from "@statewalker/shared-dataflow";
+import { type CellDefinition, DataflowGraph, readCellUpdates } from "@statewalker/shared-dataflow";
 import { type FilesApi, tryReadText } from "@statewalker/webrun-files";
-import { ResourceAdapter } from "../core/index.js";
+import { type Logger, loggerOf, ResourceAdapter } from "../core/index.js";
 import { concatPath } from "../utils/index.js";
 import { Project } from "../workspace/project.js";
 import { DEFAULT_SYSTEM_FOLDER } from "../workspace/workspace.js";
@@ -55,14 +49,8 @@ export interface YieldConfig {
   pauseMs: number;
   /** Return `false` (request interrupt + re-run) once every this many calls. */
   interruptEvery: number;
-  /** Safety cap on `run()` convergence passes. */
+  /** Safety cap on `run()` scheduling iterations. */
   maxPasses: number;
-  /**
-   * Minimum gap (ms) between state flushes while a build is running. State is
-   * persisted as each cell's transaction id advances, throttled to this interval
-   * so a fast pipeline does not storm the disk. `0` flushes on every change.
-   */
-  flushThrottleMs: number;
 }
 
 const DEFAULT_YIELD_CONFIG: YieldConfig = {
@@ -70,7 +58,6 @@ const DEFAULT_YIELD_CONFIG: YieldConfig = {
   pauseMs: 10,
   interruptEvery: 10,
   maxPasses: 1000,
-  flushThrottleMs: 250,
 };
 
 export class ProjectBuilder extends ResourceAdapter {
@@ -78,8 +65,6 @@ export class ProjectBuilder extends ResourceAdapter {
   private graph?: DataflowGraph;
   private stores?: Stores;
   private yieldCounter = 0;
-  /** Timestamp (ms) of the last state flush — drives `maybeFlush` throttling. */
-  private lastFlushAt = 0;
 
   private get yieldConfig(): YieldConfig {
     return {
@@ -211,6 +196,17 @@ export class ProjectBuilder extends ResourceAdapter {
   /**
    * Run the pipeline: the built-in scanner (mtime detection → `sources`) plus the
    * registered builders, in signal-dependency order. Yields per-stage progress.
+   *
+   * Convergence drives every stage to the latest transaction — the **frontier**.
+   * The frontier advances only when the scanner detects a change. A stage is
+   * brought up to the frontier once all of its upstream producers are already
+   * there, so it is processed upstream-first and never marked caught-up before
+   * its input has been produced. Running a caught-up stage records its
+   * transaction even when it had no work, so transaction ids stay monotonic along
+   * the dependency order (no stage stuck behind). Each advance flushes state
+   * immediately, so a build killed mid-run resumes where it stopped. When a scan
+   * surfaces no change, the pipeline has converged and every stage shares the
+   * frontier.
    */
   async *run(opts?: { builders?: string[] }): AsyncGenerator<BuildProgress> {
     const stores = await this.ensureStores();
@@ -218,46 +214,44 @@ export class ProjectBuilder extends ResourceAdapter {
     const project = this.project;
     const errors: unknown[] = [];
 
-    const handlers: Record<string, CellHandler> = {
-      [SCAN_CELL]: async ({ transactionId }) => {
-        await this.scan(stores, transactionId);
-        return true;
-      },
+    // Drive a registered builder's generator handler, persisting each emitted
+    // update. Returns the generator's final value (`false` = interrupted).
+    const runBuilder = async (id: string): Promise<boolean> => {
+      const b = this.builders.get(id);
+      if (!b) return true;
+      const gen = b.handler(project);
+      let res = await gen.next();
+      while (!res.done) {
+        const u = res.value;
+        await stores.updates.setUpdate({ signal: u.signal, uri: u.uri, stamp: u.stamp });
+        res = await gen.next();
+      }
+      return res.value !== false;
     };
-    for (const b of this.builders.values()) {
-      handlers[b.id] = async () => {
-        const gen = b.handler(project);
-        let res = await gen.next();
-        while (!res.done) {
-          const u = res.value;
-          await stores.updates.setUpdate({
-            signal: u.signal,
-            uri: u.uri,
-            stamp: u.stamp,
-          });
-          res = await gen.next();
-        }
-        return res.value !== false;
-      };
-    }
 
-    const manager = new UpdatesManager({
-      graph,
-      store: stores.transactions,
-      handlers,
-      onError: (_cellId, error) => errors.push(error),
-    });
+    const stages = this.executionOrder(graph).filter((c) => c !== SCAN_CELL);
+    const only = opts?.builders ? new Set(opts.builders) : undefined;
+    const active = only ? stages.filter((c) => only.has(c)) : stages;
+    const log = loggerOf(this, "ProjectBuilder");
+    log.info("build run started", { stages: active });
 
     try {
-      if (!opts?.builders) {
-        // Drain-first: finish any in-flight batch (stages left behind by an
-        // interrupted run) before the scanner emits a new top-level batch, so
-        // started batches complete before new ones begin.
-        const behind = await this.behindCells(stores, graph);
-        if (behind.length > 0) yield* this.converge(manager, stores, { cells: behind });
+      const maxPasses = this.yieldConfig.maxPasses;
+      for (let pass = 0; pass < maxPasses; pass++) {
+        const frontier = await this.frontier(stores, graph);
+        // Most-downstream stage behind the frontier whose producers are all at the
+        // frontier — safe to bring up to date (its input is fully produced).
+        const target = await this.nextStage(stores, graph, active, frontier);
+        if (target) {
+          yield* this.advanceStage(stores, graph, runBuilder, target, frontier, errors, log);
+          continue;
+        }
+        // Every stage is at the frontier. In explicit-builders mode we are done;
+        // otherwise scan — advancing the frontier iff the scan surfaced new work.
+        if (only) break;
+        if (!(yield* this.scanStage(stores, errors, log))) break;
       }
-      const seeds = opts?.builders ? { cells: opts.builders } : undefined;
-      yield* this.converge(manager, stores, seeds);
+      log.info("build run converged");
     } finally {
       await this.flush(stores);
     }
@@ -265,58 +259,119 @@ export class ProjectBuilder extends ResourceAdapter {
     if (errors.length > 0) throw errors[0];
   }
 
-  /**
-   * Drive the manager to convergence from `initialSeeds`: re-seed any cell that
-   * interrupted (returned `false`) until none do or the safety cap is hit. State is
-   * persisted as each cell's transaction advances (throttled) and at every
-   * committed transaction boundary, so an interrupted build resumes in place.
-   */
-  private async *converge(
-    manager: UpdatesManager,
-    stores: Stores,
-    initialSeeds: { cells: string[] } | undefined,
-  ): AsyncGenerator<BuildProgress> {
-    const maxPasses = this.yieldConfig.maxPasses;
-    let seeds = initialSeeds;
-    for (let pass = 0; pass < maxPasses; pass++) {
-      const interrupted = new Set<string>();
-      for await (const stage of manager.run(seeds)) {
-        if (stage.type === "begin") {
-          yield { type: "begin", transactionId: stage.transactionId };
-        } else if (stage.type === "end") {
-          await this.flush(stores);
-          yield { type: "end", transactionId: stage.transactionId };
-        } else {
-          if (!stage.result) interrupted.add(stage.cellId);
-          // Persist the cell's freshly-advanced transaction id before reporting it.
-          await this.maybeFlush(stores);
-          if (stage.cellId !== SCAN_CELL) {
-            yield {
-              type: "call",
-              transactionId: stage.transactionId,
-              builderId: stage.cellId,
-              result: stage.result,
-            };
-          }
-        }
-      }
-      if (interrupted.size === 0) break;
-      seeds = { cells: [...interrupted] };
+  /** Full topological execution order, the prober(s) first. */
+  private executionOrder(graph: DataflowGraph): string[] {
+    const probers = graph.getAllCells().filter((c) => graph.getCellInputs(c).length === 0);
+    const proberOutputs = new Set<SignalName>();
+    for (const p of probers) for (const out of graph.getCellOutputs(p)) proberOutputs.add(out);
+    return [...probers, ...graph.getExecutionOrder(proberOutputs)];
+  }
+
+  /** Whether `cell` has at least one unhandled update on any of its input signals. */
+  private async hasPending(stores: Stores, graph: DataflowGraph, cell: string): Promise<boolean> {
+    for await (const _ of readCellUpdates(stores.updates, graph, cell)) return true;
+    return false;
+  }
+
+  /** The latest transaction across all cells — the frontier convergence target. */
+  private async frontier(stores: Stores, graph: DataflowGraph): Promise<number> {
+    let max = 0;
+    for (const cell of graph.getAllCells()) {
+      const tx = await stores.transactions.getCellTransaction(cell);
+      if (tx > max) max = tx;
     }
+    return max;
+  }
+
+  /** Cells producing any of `cell`'s input signals. */
+  private producers(graph: DataflowGraph, cell: string): string[] {
+    const inputs = new Set(graph.getCellInputs(cell));
+    return graph.getAllCells().filter((c) => graph.getCellOutputs(c).some((s) => inputs.has(s)));
   }
 
   /**
-   * Cells lagging the rest of the pipeline: their last-committed transaction is
-   * below the maximum across all cells — i.e. an interrupted run left them behind.
-   * Draining these before re-scanning finishes the in-flight batch first.
+   * The most-downstream stage that is behind the frontier and whose producers have
+   * all reached it — so running it to completion safely brings it up to date
+   * (its input is fully produced; draining it means genuinely caught up).
    */
-  private async behindCells(stores: Stores, graph: DataflowGraph): Promise<string[]> {
-    const cells = graph.getAllCells();
-    const txs = await Promise.all(
-      cells.map(async (c) => [c, await stores.transactions.getCellTransaction(c)] as const),
-    );
-    const max = Math.max(0, ...txs.map(([, t]) => t));
-    return txs.filter(([, t]) => t < max).map(([c]) => c);
+  private async nextStage(
+    stores: Stores,
+    graph: DataflowGraph,
+    stages: string[],
+    frontier: number,
+  ): Promise<string | undefined> {
+    let target: string | undefined;
+    for (const cell of stages) {
+      if ((await stores.transactions.getCellTransaction(cell)) >= frontier) continue;
+      let ready = true;
+      for (const p of this.producers(graph, cell)) {
+        if ((await stores.transactions.getCellTransaction(p)) < frontier) {
+          ready = false;
+          break;
+        }
+      }
+      if (ready) target = cell;
+    }
+    return target;
+  }
+
+  /**
+   * Run one stage toward the frontier. A handler that interrupts (`false`) leaves
+   * work pending and keeps its old transaction, to be re-selected next pass; once
+   * it has drained its input it is recorded at the frontier — even if it handled
+   * nothing — keeping transaction ids monotonic. State is flushed on each advance.
+   */
+  private async *advanceStage(
+    stores: Stores,
+    graph: DataflowGraph,
+    runBuilder: (id: string) => Promise<boolean>,
+    cellId: string,
+    frontier: number,
+    errors: unknown[],
+    log: Logger,
+  ): AsyncGenerator<BuildProgress> {
+    yield { type: "begin", transactionId: frontier };
+    log.debug("advancing stage", { stage: cellId, frontier });
+    let finished = false;
+    try {
+      finished = await runBuilder(cellId);
+    } catch (error) {
+      log.error("stage failed", { stage: cellId, error });
+      errors.push(error);
+    }
+    const drained = !(await this.hasPending(stores, graph, cellId));
+    if (drained) await stores.transactions.setCellTransaction(cellId, frontier);
+    await this.flush(stores);
+    const result = finished || drained;
+    log.info("stage", { stage: cellId, result: result ? "ok" : "interrupted", tx: frontier });
+    yield { type: "call", transactionId: frontier, builderId: cellId, result };
+    yield { type: "end", transactionId: frontier };
+  }
+
+  /**
+   * Run the scanner under a fresh transaction. Advances the frontier (records the
+   * scanner at the new transaction) only if the scan emitted at least one update;
+   * the generator's return value reports whether it did.
+   */
+  private async *scanStage(
+    stores: Stores,
+    errors: unknown[],
+    log: Logger,
+  ): AsyncGenerator<BuildProgress, boolean> {
+    const transactionId = await stores.transactions.newTransactionId();
+    yield { type: "begin", transactionId };
+    let emitted = false;
+    try {
+      emitted = await this.scan(stores, transactionId);
+    } catch (error) {
+      log.error("scan failed", { error });
+      errors.push(error);
+    }
+    if (emitted) await stores.transactions.setCellTransaction(SCAN_CELL, transactionId);
+    await this.flush(stores);
+    log.info(emitted ? "scan detected changes" : "scan: no changes", { tx: transactionId });
+    yield { type: "end", transactionId };
+    return emitted;
   }
 
   /** Per-builder pending counts and last-run transaction ids. */
@@ -360,9 +415,13 @@ export class ProjectBuilder extends ResourceAdapter {
 
   // ---- internals ----------------------------------------------------------
 
-  /** Generic mtime change-detection: emit `sources` / `sources:removed`. */
-  private async scan(stores: Stores, transactionId: number): Promise<void> {
+  /**
+   * Generic mtime change-detection: emit `sources` / `sources:removed`. Returns
+   * whether it emitted any update (i.e. whether the source set changed).
+   */
+  private async scan(stores: Stores, transactionId: number): Promise<boolean> {
     const { updates, scannerState } = stores;
+    let emitted = false;
     const base = this.project.path.replace(/^\/+|\/+$/g, "");
     // `.projectignore` (gitignore-style) at the project root: excluded paths are
     // skipped here, so they never enter `seen` and any previously-indexed ones are
@@ -390,6 +449,7 @@ export class ProjectBuilder extends ResourceAdapter {
         stamp: transactionId,
       });
       scannerState.set(uri, mtime);
+      emitted = true;
     }
     for (const uri of [...scannerState.keys()]) {
       if (seen.has(uri)) continue;
@@ -399,7 +459,9 @@ export class ProjectBuilder extends ResourceAdapter {
         stamp: transactionId,
       });
       scannerState.delete(uri);
+      emitted = true;
     }
+    return emitted;
   }
 
   /** Map a filesystem path under the project to a project-relative bare URI. */
@@ -419,13 +481,5 @@ export class ProjectBuilder extends ResourceAdapter {
       stores.scannerPath,
       Object.fromEntries(stores.scannerState),
     );
-    this.lastFlushAt = Date.now();
-  }
-
-  /** Flush state, throttled to at most once per `flushThrottleMs` while running. */
-  private async maybeFlush(stores: Stores): Promise<void> {
-    if (Date.now() - this.lastFlushAt >= this.yieldConfig.flushThrottleMs) {
-      await this.flush(stores);
-    }
   }
 }

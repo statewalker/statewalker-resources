@@ -251,9 +251,47 @@ describe("ProjectBuilder", () => {
     expect(indexSeen.sort()).toEqual(["index:a.md", "index:notes/b.md"]);
   });
 
+  it("finishes the in-flight downstream batch before scanning new sources", async () => {
+    // a.md is in flight at the 'index' (most-downstream) stage when b.md appears
+    // out of band. The pipeline must push a.md to the end before the scanner pulls
+    // b.md in at the front.
+    const filesApi = new MemFilesApi({ initialFiles: { "p/a.md": "A" } });
+    const repo = new ResourceRepository({ filesApi });
+    repo.register("", ContentReadAdapter);
+    repo.register("", ContentWriteAdapter);
+    repo.register("", TextAdapter);
+    repo.register("", Project);
+    repo.register("", ProjectBuilder);
+    repo.register(ResourceRepository, Workspace);
+    const project = await repo.requireAdapter<Workspace>(Workspace).getProject("p");
+    const builder = project!.requireAdapter(ProjectBuilder);
+    const order: string[] = [];
+    builder.registerBuilder(passthrough("extract", "sources", "content", order));
+    builder.registerBuilder(passthrough("index", "content", "indexed", order));
+    await drain(builder.run());
+
+    // Leave 'index' behind with a.md's content still unhandled (an interrupted
+    // downstream stage), then drop a new source in before the next run.
+    await builder.restartFrom("index");
+    order.length = 0;
+    await filesApi.write(
+      "p/b.md",
+      (async function* () {
+        yield new TextEncoder().encode("B");
+      })(),
+    );
+
+    await drain(builder.run());
+
+    // a.md drains through 'index' before 'extract' ingests the freshly-scanned b.md.
+    expect(order).toContain("index:a.md");
+    expect(order).toContain("extract:b.md");
+    expect(order.indexOf("index:a.md")).toBeLessThan(order.indexOf("extract:b.md"));
+  });
+
   it("flushes state as each cell's transaction advances, not only at the end", async () => {
     const filesApi = new MemFilesApi({ initialFiles: { "p/a.md": "A" } });
-    const repo = new ResourceRepository({ filesApi, builderYield: { flushThrottleMs: 0 } });
+    const repo = new ResourceRepository({ filesApi });
     repo.register("", ContentReadAdapter);
     repo.register("", ContentWriteAdapter);
     repo.register("", TextAdapter);
@@ -359,5 +397,60 @@ describe("ProjectBuilder", () => {
       "extract:4.md",
       "extract:5.md",
     ]);
+  });
+
+  it("converges every stage to the same latest transaction, even one with no work", async () => {
+    const builder = await openBuilder();
+    builder.registerBuilder(passthrough("extract", "sources", "content", []));
+    builder.registerBuilder(passthrough("index", "content", "indexed", []));
+    // A sink consuming only `sources-removed`. No removals occur, so it never does
+    // real work — but it must still be carried up to the frontier transaction.
+    builder.registerBuilder({
+      id: "pruneIndex",
+      inputs: ["sources-removed"],
+      outputs: [],
+      // biome-ignore lint/correctness/useYield: a sink — consumes updates, emits none
+      async *handler(project): AsyncGenerator<EmittedUpdate, boolean> {
+        const b = project.requireAdapter(ProjectBuilder);
+        for await (const u of b.readUpdates({ signal: "sources-removed", cell: "pruneIndex" })) {
+          await u.handled();
+        }
+        return true;
+      },
+    });
+
+    await drain(builder.run());
+
+    const txs = (await builder.status()).builders.map((b) => b.lastTransaction);
+    expect(txs[0]).toBeGreaterThan(0);
+    expect(new Set(txs).size).toBe(1); // all stages share the one latest transaction
+  });
+
+  it("records a stage's transaction once it drains, even if it kept interrupting", async () => {
+    // interruptEvery: 1 makes the passthrough return false after every item — it
+    // never finishes on a clean `true`. It must still end up at a non-zero
+    // transaction (caught up), not stuck at 0.
+    const filesApi = new MemFilesApi({
+      initialFiles: { "p/1.md": "1", "p/2.md": "2", "p/3.md": "3" },
+    });
+    const repo = new ResourceRepository({
+      filesApi,
+      builderYield: { interruptEvery: 1, pauseEvery: 0, pauseMs: 0, maxPasses: 100 },
+    });
+    repo.register("", ContentReadAdapter);
+    repo.register("", ContentWriteAdapter);
+    repo.register("", TextAdapter);
+    repo.register("", Project);
+    repo.register("", ProjectBuilder);
+    repo.register(ResourceRepository, Workspace);
+    const project = await repo.requireAdapter<Workspace>(Workspace).getProject("p");
+    const builder = project!.requireAdapter(ProjectBuilder);
+    builder.registerBuilder(passthrough("extract", "sources", "content", []));
+    await drain(builder.run());
+
+    const status = await builder.status();
+    const extract = status.builders.find((b) => b.id === "extract");
+    expect(extract?.pending).toBe(0);
+    expect(extract?.lastTransaction).toBeGreaterThan(0);
   });
 });
