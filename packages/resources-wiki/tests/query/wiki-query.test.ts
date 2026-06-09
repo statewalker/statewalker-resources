@@ -3,6 +3,7 @@ import {
   ContentWriteAdapter,
   Project,
   ProjectBuilder,
+  type Resource,
   ResourceRepository,
   TextAdapter,
   Workspace,
@@ -16,14 +17,15 @@ import {
   type EmbedFn,
   type LlmApi,
   metaBuilder,
-  type ReformulationOutput,
   registerContentExtraction,
   registerKnowledgeAdapters,
   registerQuery,
   registerSearch,
   reorganizeBuilder,
+  type SearchBlock,
   searchBuilder,
   summarizeBuilder,
+  WikiPageSummary,
   WikiQuery,
 } from "../../src/index.js";
 import { registerStubLlm } from "../util/stub-llm.js";
@@ -32,7 +34,7 @@ const DIM = 2;
 const embed: EmbedFn = async (text) => {
   const v = new Float32Array(DIM);
   if (text.toLowerCase().includes("acme")) v[0] = 1;
-  if (text.toLowerCase().includes("founder")) v[1] = 1;
+  if (text.toLowerCase().includes("found")) v[1] = 1;
   return v;
 };
 
@@ -40,20 +42,8 @@ const SUMMARY: DocumentSummaryOutput = {
   title: "Acme",
   summary: "Acme and its founders.",
   sections: [
-    {
-      key: "intro",
-      title: "Intro",
-      startLine: 0,
-      endLine: 0,
-      summary: "Acme is a company.",
-    },
-    {
-      key: "founders",
-      title: "Founders",
-      startLine: 1,
-      endLine: 1,
-      summary: "Jane founded Acme.",
-    },
+    { key: "intro", title: "Intro", startLine: 0, endLine: 0, summary: "Acme is a company." },
+    { key: "founders", title: "Founders", startLine: 1, endLine: 1, summary: "Jane founded Acme." },
   ],
 };
 const META: DocumentMetaOutput = {
@@ -69,50 +59,70 @@ const META: DocumentMetaOutput = {
   outliers: [],
 };
 
-// Reformulation routing is controlled per-test by mutating this.
-let reformulation: ReformulationOutput = {};
+const MARKER_RE = /\[\[(wiki:\/\/[^\]]+)\]\]/g;
+
+// Per-test controls + observations.
+interface Intent {
+  onCorpus: boolean;
+  subjects: { prompt: string }[];
+  offCorpusReason?: string;
+}
+let intent: Intent;
+let selectedTopicKeys: ((available: string[]) => string[]) | undefined;
+let calls: Record<string, number>;
+let foldSections: string[];
 
 const generateObject: LlmApi["generateObject"] = async (spec) => {
   const usage = { inputTokens: 0, outputTokens: 0 };
-  if (spec.name === "summarize-document") return { output: SUMMARY as unknown as never, usage };
-  if (spec.name === "extract-document-meta") return { output: META as unknown as never, usage };
-  if (spec.name === "reformulate-query")
-    return { output: reformulation as unknown as never, usage };
-  if (spec.name === "select-topics") {
-    // Stand in for the selection LLM: pick the available classes named by the
-    // test's `topicDescent` route (mirrors a model judging relevance).
-    const input = spec.input as {
-      availableTopics: { key: string }[];
-      availableOutliers: { key: string }[];
-    };
-    const want = new Set(reformulation.topicDescent ?? []);
-    return {
-      output: {
-        topicKeys: input.availableTopics.map((t) => t.key).filter((k) => want.has(k)),
-        outlierKeys: input.availableOutliers.map((o) => o.key).filter((k) => want.has(k)),
-      } as unknown as never,
-      usage,
-    };
+  const out = (o: unknown) => ({ output: o as never, usage });
+  calls[spec.name] = (calls[spec.name] ?? 0) + 1;
+  switch (spec.name) {
+    case "summarize-document":
+      return out(SUMMARY);
+    case "extract-document-meta":
+      return out(META);
+    case "intent-detection":
+      return out(intent);
+    case "topic-select": {
+      const input = spec.input as {
+        availableTopics: { key: string }[];
+        availableOutliers: { key: string }[];
+      };
+      const topicKeys = input.availableTopics.map((t) => t.key);
+      const outlierKeys = input.availableOutliers.map((o) => o.key);
+      return out({
+        topicKeys: selectedTopicKeys ? selectedTopicKeys(topicKeys) : topicKeys,
+        outlierKeys,
+      });
+    }
+    case "doc-topic-select":
+      return out({
+        selected: (spec.input as { candidates: { uri: string }[] }).candidates.map((c) => c.uri),
+      });
+    case "summarize-fold": {
+      const section = (spec.input as { section: string }).section;
+      foldSections.push(section);
+      const prev = section.match(/<previous_summary>\n([\s\S]*?)\n<\/previous_summary>/)?.[1] ?? "";
+      const marker = section.match(MARKER_RE)?.[0] ?? "";
+      return out({ text: `${prev} fact ${marker}`.trim() });
+    }
+    case "compose-answer": {
+      const text = (spec.input as { summaries: { text: string }[] }).summaries
+        .map((s) => s.text)
+        .join(" ");
+      const citations = [...text.matchAll(MARKER_RE)].map((m) => m[1]);
+      return out({ text, citations, suggestions: [] });
+    }
+    default:
+      throw new Error(`unexpected call ${spec.name}`);
   }
-  if (spec.name === "compose-answer") {
-    // Cite whatever evidence we were given (first section), as a [[wiki://...]] marker.
-    const input = spec.input as {
-      evidence: { uri: string; sectionKey: string }[];
-    };
-    const first = input.evidence[0];
-    const text = first
-      ? `Answer. [[wiki://proj/${first.uri}#${first.sectionKey}]]`
-      : "No supporting evidence found.";
-    return {
-      output: {
-        text,
-        citations: first ? [`wiki://proj/${first.uri}#${first.sectionKey}`] : [],
-        suggestions: [],
-      } as unknown as never,
-      usage,
-    };
-  }
-  throw new Error(`unexpected call ${spec.name}`);
+};
+
+/** Index each section's title + summary for FTS so hybrid search returns real hits. */
+const blocks = async (resource: Resource): Promise<SearchBlock[]> => {
+  const summary = await resource.getAdapter(WikiPageSummary)?.get();
+  if (!summary) return [];
+  return summary.sections.map((s) => ({ blockId: s.key, text: `${s.title} ${s.summary}` }));
 };
 
 async function buildProject() {
@@ -134,12 +144,7 @@ async function buildProject() {
     embedModel: "fixture",
     dimensionality: DIM,
   });
-  registerSearch(repository, {
-    embed,
-    model: "fixture",
-    dimensionality: DIM,
-    blocks: async () => [],
-  });
+  registerSearch(repository, { embed, model: "fixture", dimensionality: DIM, blocks });
   registerQuery(repository);
 
   const workspace = repository.requireAdapter<Workspace>(Workspace);
@@ -150,7 +155,6 @@ async function buildProject() {
   builder.registerBuilder(summarizeBuilder());
   builder.registerBuilder(metaBuilder());
   builder.registerBuilder(reorganizeBuilder());
-  // Index sections for search: fts over summary, vector over summary.
   builder.registerBuilder(searchBuilder({ inputSignal: "summarized" }));
   for await (const _ of builder.run()) {
     // drain
@@ -158,48 +162,81 @@ async function buildProject() {
   return project;
 }
 
-describe("WikiQuery — routed retrieval", () => {
+describe("WikiQuery — FSM-driven retrieval", () => {
   let project: Awaited<ReturnType<typeof buildProject>>;
 
   beforeEach(async () => {
-    reformulation = {};
+    intent = { onCorpus: true, subjects: [{ prompt: "Who founded Acme?" }] };
+    selectedTopicKeys = undefined;
+    calls = {};
+    foldSections = [];
     project = await buildProject();
   });
 
   it("returns a QueryProgress synchronously and resolves a cited answer", async () => {
-    reformulation = { topicDescent: ["company-founders"] };
-    const query = project.requireAdapter(WikiQuery);
-    const progress = query.ask("Who founded Acme?");
+    const progress = project.requireAdapter(WikiQuery).ask("Who founded Acme?");
     expect(typeof progress.complete).toBe("function");
     const answer = await progress.complete();
     expect(answer.text).toMatch(/\[\[wiki:\/\/proj\/a\.md#\w+\]\]/);
+    expect(answer.citations.length).toBeGreaterThan(0);
+    expect(answer.evidenceCount).toBeGreaterThan(0);
   });
 
-  it("dedupes a section surfaced by both branches by (uri, sectionKey)", async () => {
-    // Both branches point at the same doc → its sections must appear once.
-    reformulation = {
-      semanticQueries: ["acme"],
-      topicDescent: ["company-founders"],
-    };
-    const query = project.requireAdapter(WikiQuery);
-    const progress = query.ask("Acme founders?");
+  it("dedupes a section surfaced by both retrieval front-ends by (uri, sectionKey)", async () => {
+    const progress = project.requireAdapter(WikiQuery).ask("Acme founders?");
     await progress.complete();
     const keys = progress.evidence.map((e) => `${e.uri}#${e.sectionKey}`);
+    expect(keys.length).toBeGreaterThan(0);
     expect(new Set(keys).size).toBe(keys.length); // no duplicates
   });
 
+  it("fans retrieval out per subject (handler-internal)", async () => {
+    intent = {
+      onCorpus: true,
+      subjects: [{ prompt: "Who founded Acme?" }, { prompt: "What is Acme?" }],
+    };
+    await project.requireAdapter(WikiQuery).ask("Acme + founders").complete();
+    // The class ladder runs once per subject.
+    expect(calls["topic-select"]).toBe(2);
+    expect(calls["doc-topic-select"]).toBe(2);
+  });
+
+  it("the rolling-summarize fold exposes the four XML tags; the first omits previous_summary", async () => {
+    await project.requireAdapter(WikiQuery).ask("Who founded Acme?").complete();
+    expect(foldSections.length).toBeGreaterThan(0);
+    for (const section of foldSections) {
+      expect(section).toContain("<section_title");
+      expect(section).toContain("<section_description>");
+      expect(section).toContain("<raw_content>");
+    }
+    expect(foldSections[0]).not.toContain("<previous_summary>");
+    if (foldSections.length > 1) expect(foldSections[1]).toContain("<previous_summary>");
+  });
+
+  it("grounds every surviving citation in a retrieved section", async () => {
+    const answer = await project.requireAdapter(WikiQuery).ask("Who founded Acme?").complete();
+    for (const c of answer.citations) expect(c).toMatch(/wiki:\/\/proj\/a\.md#/);
+  });
+
   it("returns a terminal negative answer when there is no evidence", async () => {
-    reformulation = { topicDescent: ["nonexistent-topic"] };
-    const query = project.requireAdapter(WikiQuery);
-    const answer = await query.ask("Unrelated?").complete();
+    selectedTopicKeys = () => []; // class ladder yields nothing
+    intent = { onCorpus: true, subjects: [{ prompt: "quizzaciously unrelated xyzzy" }] };
+    const answer = await project.requireAdapter(WikiQuery).ask("Unrelated?").complete();
     expect(answer.evidenceCount).toBe(0);
     expect(answer.text).toMatch(/no supporting evidence/i);
     expect(answer.topics).toEqual([]);
     expect(answer.outliers).toEqual([]);
   });
 
-  it("notifies onChange listeners as the run progresses", async () => {
-    reformulation = { topicDescent: ["company-founders"] };
+  it("returns a terminal negative answer for an off-corpus prompt without retrieving", async () => {
+    intent = { onCorpus: false, subjects: [], offCorpusReason: "asks about cooking" };
+    const answer = await project.requireAdapter(WikiQuery).ask("How do I bake bread?").complete();
+    expect(answer.evidenceCount).toBe(0);
+    expect(answer.text).toMatch(/outside the wiki/i);
+    expect(calls["topic-select"]).toBeUndefined(); // retrieval never ran
+  });
+
+  it("notifies onChange listeners and records stages as the run progresses", async () => {
     const progress = project.requireAdapter(WikiQuery).ask("Who founded Acme?");
     let count = 0;
     const off = progress.onChange(() => count++);
@@ -210,12 +247,10 @@ describe("WikiQuery — routed retrieval", () => {
   });
 
   it("aggregates topics from the evidence pages onto the answer", async () => {
-    reformulation = { topicDescent: ["company-founders"] };
     const answer = await project.requireAdapter(WikiQuery).ask("Who founded Acme?").complete();
     const topic = answer.topics.find((t) => t.key === "company-founders");
     expect(topic).toBeDefined();
     expect(topic?.name).toBe("Company founders");
-    // Cited as a canonical wiki:// reference to the covered section.
     expect(topic?.citations.some((c) => c.uri.includes("a.md#founders"))).toBe(true);
   });
 });

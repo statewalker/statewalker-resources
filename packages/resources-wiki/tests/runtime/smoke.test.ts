@@ -11,7 +11,6 @@ import {
   type DocumentMetaOutput,
   type DocumentSummaryOutput,
   type LlmApi,
-  type ReformulationOutput,
   registerWiki,
   WikiPageSummary,
   WikiQuery,
@@ -49,7 +48,7 @@ const META: DocumentMetaOutput = {
 const GRAPH: DocumentGraphOutput = {
   sections: [{ sectionKey: "intro", entities: [{ value: "Acme" }], statements: [], relations: [] }],
 };
-const REFORMULATION: ReformulationOutput = { topicDescent: ["companies"] };
+const MARKER_RE = /\[\[(wiki:\/\/[^\]]+)\]\]/g;
 
 const generateObject: LlmApi["generateObject"] = async (spec) => {
   const usage = { inputTokens: 0, outputTokens: 0 };
@@ -61,26 +60,41 @@ const generateObject: LlmApi["generateObject"] = async (spec) => {
       return out(META);
     case "extract-document-graph":
       return out(GRAPH);
-    case "reformulate-query":
-      return out(REFORMULATION);
-    case "select-topics": {
+    case "intent-detection":
+      return out({
+        onCorpus: true,
+        subjects: [{ prompt: (spec.input as { question: string }).question }],
+      });
+    case "topic-select": {
+      // Keep every available class (the corpus is tiny); grounding narrows later.
       const input = spec.input as {
         availableTopics: { key: string }[];
         availableOutliers: { key: string }[];
       };
-      const want = new Set(REFORMULATION.topicDescent ?? []);
       return out({
-        topicKeys: input.availableTopics.map((t) => t.key).filter((k) => want.has(k)),
-        outlierKeys: input.availableOutliers.map((o) => o.key).filter((k) => want.has(k)),
+        topicKeys: input.availableTopics.map((t) => t.key),
+        outlierKeys: input.availableOutliers.map((o) => o.key),
       });
     }
+    case "doc-topic-select": {
+      // Recall-first: keep every candidate.
+      const input = spec.input as { candidates: { uri: string }[] };
+      return out({ selected: input.candidates.map((c) => c.uri) });
+    }
+    case "summarize-fold": {
+      // Carry the section's marker forward into the rolling summary.
+      const section = (spec.input as { section: string }).section;
+      const prev = section.match(/<previous_summary>\n([\s\S]*?)\n<\/previous_summary>/)?.[1] ?? "";
+      const marker = section.match(MARKER_RE)?.[0] ?? "";
+      return out({ text: `${prev} Acme is a company. ${marker}`.trim() });
+    }
     case "compose-answer": {
-      const ev = (spec.input as { evidence: { uri: string; sectionKey: string }[] }).evidence[0];
-      return out({
-        text: ev ? `Acme is a company. [[wiki://proj/${ev.uri}#${ev.sectionKey}]]` : "No evidence.",
-        citations: ev ? [`wiki://proj/${ev.uri}#${ev.sectionKey}`] : [],
-        suggestions: [],
-      });
+      // Cite whatever markers the rolling summaries carried.
+      const text = (spec.input as { summaries: { text: string }[] }).summaries
+        .map((s) => s.text)
+        .join(" ");
+      const citations = [...text.matchAll(MARKER_RE)].map((m) => m[1]);
+      return out({ text, citations, suggestions: [] });
     }
     default:
       throw new Error(`unexpected ${spec.name}`);

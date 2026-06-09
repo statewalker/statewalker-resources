@@ -1,0 +1,83 @@
+import { getProgress, getTerminate } from "./context.js";
+import {
+  ChapterPlanTrigger,
+  IntentDetectionTrigger,
+  NegativeResponseTrigger,
+  RespondTrigger,
+  ResponseTrigger,
+  RetrieveTrigger,
+  SummarizeTrigger,
+  VerifyTrigger,
+} from "./handlers.js";
+import type { Ctx, QueryHandler, QueryStateKey } from "./query-fsm.js";
+
+/**
+ * Exhaustive handler map. The `Record<QueryStateKey, …>` makes a missing handler
+ * a COMPILE error (no silent runtime no-op). The composite root (`Query`) has no
+ * handler — it routes via its initial transition.
+ */
+const HANDLERS: Record<QueryStateKey, QueryHandler | undefined> = {
+  Query: undefined,
+  IntentDetection: IntentDetectionTrigger,
+  Retrieve: RetrieveTrigger,
+  ChapterPlan: ChapterPlanTrigger,
+  Summarize: SummarizeTrigger,
+  Respond: RespondTrigger,
+  Verify: VerifyTrigger,
+  Response: ResponseTrigger,
+  NegativeResponse: NegativeResponseTrigger,
+};
+
+/** Map FSM states to the observable `QueryProgress` stage names. Terminals publish directly. */
+const STAGE_FOR: Partial<Record<QueryStateKey, string>> = {
+  IntentDetection: "intent",
+  Retrieve: "retrieve",
+  ChapterPlan: "chapter-plan",
+  Summarize: "summarize",
+  Respond: "respond",
+  Verify: "verify",
+};
+
+/** Record a `QueryProgress` stage per mapped FSM state (running on enter, done on exit). */
+function instrument(stateKey: QueryStateKey): QueryHandler {
+  return (ctx) => {
+    const name = STAGE_FOR[stateKey];
+    if (!name) return;
+    const progress = getProgress(ctx);
+    progress.stage(name);
+    return () => progress.finishStage();
+  };
+}
+
+/**
+ * Wrap a trigger so a thrown (network/schema) failure becomes a terminal failure.
+ * `startProcess` swallows generator errors, so catching here is what rejects
+ * `complete()` (via `_fail`) and stops the machine instead of stalling.
+ */
+function guarded(handler: QueryHandler): QueryHandler {
+  return async function* (ctx) {
+    try {
+      const result = handler(ctx);
+      if (result && typeof result === "object" && Symbol.asyncIterator in (result as object)) {
+        yield* result as AsyncGenerator<string>;
+      }
+    } catch (error) {
+      getProgress(ctx)._fail(error);
+      await getTerminate(ctx)();
+    }
+  };
+}
+
+/**
+ * Explicit, typed loader for `startProcess`: prepend instrumentation to each state
+ * and append its guarded handler (if any). No `HandlerRegistry` pattern discovery.
+ */
+export function load(state: string): QueryHandler[] {
+  const key = state as QueryStateKey;
+  const mods: QueryHandler[] = [instrument(key)];
+  const handler = HANDLERS[key];
+  if (handler) mods.push(guarded(handler));
+  return mods;
+}
+
+export type { Ctx };

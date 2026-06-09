@@ -40,6 +40,7 @@
     "@statewalker/resources-workspace": "workspace:*",
     "@statewalker/content-extractors": "catalog:",
     "@statewalker/fsm": "catalog:",
+    "@statewalker/shared-adapters": "catalog:",
     "@statewalker/indexer-api": "catalog:",
     "@statewalker/indexer-fulltext": "catalog:",
     "@statewalker/indexer-mem-flexsearch": "catalog:",
@@ -54,6 +55,7 @@
     "zod": "catalog:"
   },
   "devDependencies": {
+    "@statewalker/fsm-validator": "catalog:",
     "@statewalker/webrun-files-mem": "catalog:",
     "@statewalker/webrun-files-node": "catalog:",
     "@types/node": "catalog:",

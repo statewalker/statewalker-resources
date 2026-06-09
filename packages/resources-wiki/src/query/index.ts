@@ -1,3 +1,5 @@
+export type { Answer, AnswerTopic, EvidenceSection } from "./progress.js";
+export { QueryProgress } from "./progress.js";
 export {
   type ReportSpec,
   registerSnapshots,
@@ -5,13 +7,4 @@ export {
   type SnapshotInfo,
   WikiSnapshotsAdapter,
 } from "./snapshots.js";
-export {
-  type Answer,
-  type AnswerTopic,
-  type EvidenceSection,
-  type QueryDepth,
-  QueryProgress,
-  type ReformulationOutput,
-  registerQuery,
-  WikiQuery,
-} from "./wiki-query.js";
+export { registerQuery, WikiQuery } from "./wiki-query.js";
