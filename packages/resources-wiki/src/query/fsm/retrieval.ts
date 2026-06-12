@@ -137,7 +137,7 @@ export async function orderEvidence(
  * Aggregate the topic/outlier classes the retrieved evidence touches: for each
  * evidence page read its `WikiPageMeta`, keep every declared class whose
  * `sectionKeys` intersect the retrieved sections, and cite each covered section
- * as a canonical `wiki://` reference. Classes are unioned across pages by key.
+ * as a canonical local reference (`/path#section`). Classes are unioned across pages by key.
  */
 export async function aggregateClasses(
   project: Project,

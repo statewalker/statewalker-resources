@@ -1,15 +1,15 @@
 import { startProcess } from "@statewalker/fsm";
 import { loggerOf, type Project } from "@statewalker/resources-workspace";
-import { llmOf, wikiConfigOf } from "../../llm/index.js";
 import { QueryProgress } from "../progress.js";
-import { setConfig, setLlm, setProgress, setProject, setRequest } from "./context.js";
 import { load } from "./load.js";
-import { type Ctx, QUERY_FSM } from "./query-fsm.js";
+import { QueryContext } from "./query-context.js";
+import { QUERY_FSM } from "./query-fsm.js";
 
 /**
- * Drive the query pipeline as an FSM. Builds the flat process context, injects the
- * launch-time adapters (project + the `llmOf` / `wikiConfigOf` project adapters),
- * and runs `QUERY_FSM` via `startProcess`. The state handlers own the stage logic.
+ * Drive the query pipeline as an FSM. Builds the typed `QueryContext` (project +
+ * the per-query request and progress) and runs `QUERY_FSM` via `startProcess`.
+ * Project-global capabilities (LLM, wiki config) are reached by handlers through
+ * `ctx.project`, not copied onto the context. The state handlers own the stage logic.
  *
  * Returns a `QueryProgress` synchronously; transitions proceed asynchronously and
  * the result surfaces on it (await `progress.complete()`).
@@ -17,12 +17,7 @@ import { type Ctx, QUERY_FSM } from "./query-fsm.js";
 export function runQuery(project: Project, question: string): QueryProgress {
   const progress = new QueryProgress();
   const log = loggerOf(project, "QueryFsm");
-  const ctx: Ctx = {};
-  setProject(ctx, project);
-  setLlm(ctx, llmOf(project));
-  setConfig(ctx, wikiConfigOf(project));
-  setRequest(ctx, { question });
-  setProgress(ctx, progress);
+  const ctx = new QueryContext(project, { question }, progress);
   log.info("query start", { question });
   // Trace every state entry (and the event that drove it) so a stall is visible —
   // the last logged state is where the pipeline is stuck.

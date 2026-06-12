@@ -17,17 +17,19 @@ export const intentDetectionSchema = z
   .object({
     onCorpus: z
       .boolean()
-      .describe("True if the prompt concerns the vault's domain; false if out of scope."),
+      .describe(
+        "Recall-first scope flag. True unless the prompt is not a retrieval request against this corpus at all. A prompt naming specific entities, facts, or relationships is on-corpus EVEN WHEN no topic class matches — downstream full-text + semantic search is the real gate, not the topic vocabulary.",
+      ),
     offCorpusReason: z
       .string()
       .nullable()
       .describe(
-        "When onCorpus is false, a one-line reason the prompt is out of scope; null otherwise.",
+        "When onCorpus is false, a one-line reason the prompt is not a retrieval request against this corpus; null otherwise.",
       ),
     subjects: z
       .array(z.object({ prompt: z.string() }))
       .describe(
-        "The distinct subjects the prompt decomposes into, each re-formulated as a standalone, vault-aligned search prompt. Use one subject for a single-subject prompt.",
+        "The distinct subjects the prompt decomposes into, each re-formulated as a standalone search prompt. PRESERVE named entities and specific terms (proper nouns, organisations, people, places, tickers) verbatim — they drive full-text retrieval. Use one subject for a single-subject prompt.",
       ),
   })
   .describe("On/off-corpus classification plus subject decomposition. Does NOT answer the prompt.");
@@ -108,7 +110,7 @@ export const composeInputSchema = z.object({
   summaries: z.array(
     z.object({
       text: z.string(),
-      /** The `[[wiki://…]]` markers grounding this summary — the citations the answer may use. */
+      /** The `[[/path#section]]` markers grounding this summary — the citations the answer may use. */
       refs: z.array(z.string()),
     }),
   ),
@@ -126,7 +128,7 @@ export const composeSchema = z.object({
         citations: z
           .array(z.string())
           .describe(
-            "The `[[wiki://…]]` refs (verbatim from the summaries' refs) grounding THIS statement. At least one; omit the claim entirely if you cannot cite it.",
+            "The `[[/path#section]]` refs (verbatim from the summaries' refs) grounding THIS statement. At least one; omit the claim entirely if you cannot cite it.",
           ),
       }),
     )

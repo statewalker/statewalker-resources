@@ -59,7 +59,7 @@ const META: DocumentMetaOutput = {
   outliers: [],
 };
 
-const MARKER_RE = /\[\[(wiki:\/\/[^\]]+)\]\]/g;
+const MARKER_RE = /\[\[(\/[^\]]+)\]\]/g;
 
 // Per-test controls + observations.
 interface Intent {
@@ -186,7 +186,7 @@ describe("WikiQuery — FSM-driven retrieval", () => {
     const progress = project.requireAdapter(WikiQuery).ask("Who founded Acme?");
     expect(typeof progress.complete).toBe("function");
     const answer = await progress.complete();
-    expect(answer.text).toMatch(/\[\[wiki:\/\/proj\/a\.md#\w+\]\]/);
+    expect(answer.text).toMatch(/\[\[\/a\.md#\w+\]\]/);
     expect(answer.citations.length).toBeGreaterThan(0);
     expect(answer.evidenceCount).toBeGreaterThan(0);
   });
@@ -238,7 +238,7 @@ describe("WikiQuery — FSM-driven retrieval", () => {
 
   it("grounds every surviving citation in a retrieved section", async () => {
     const answer = await project.requireAdapter(WikiQuery).ask("Who founded Acme?").complete();
-    for (const c of answer.citations) expect(c).toMatch(/wiki:\/\/proj\/a\.md#/);
+    for (const c of answer.citations) expect(c).toMatch(/^\/a\.md#/);
   });
 
   it("returns a terminal negative answer when there is no evidence", async () => {

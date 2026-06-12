@@ -8,7 +8,6 @@ import {
   ResourceTextContentCache,
   registerWiki,
   WikiPageEmbeddings,
-  WikiPageGraph,
   WikiPageMeta,
   WikiPageSummary,
   WikiTopicIndex,
@@ -164,7 +163,6 @@ describe("wiki builders — incremental behaviour", () => {
     const resource = await project.getProjectResource("b.md");
     expect(await resource?.requireAdapter(WikiPageSummary).get()).toBeUndefined();
     expect(await resource?.requireAdapter(WikiPageMeta).get()).toBeUndefined();
-    expect(await resource?.requireAdapter(WikiPageGraph).get()).toBeUndefined();
     expect(await project.requireAdapter(WikiTopicIndex).get("bravo")).toBeUndefined();
   });
 
@@ -259,6 +257,5 @@ describe("wiki builders — incremental behaviour", () => {
     expect(rawMeta?.hash).toMatch(/^[0-9a-f]{64}$/);
     expect((await resource.requireAdapter(WikiPageSummary).get())?.sourceHash).toBe(rawMeta?.hash);
     expect((await resource.requireAdapter(WikiPageMeta).get())?.sourceHash).toBe(rawMeta?.hash);
-    expect((await resource.requireAdapter(WikiPageGraph).get())?.sourceHash).toBe(rawMeta?.hash);
   });
 });

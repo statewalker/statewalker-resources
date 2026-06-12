@@ -1,10 +1,11 @@
 import type { FsmStateConfig, StageHandler } from "@statewalker/fsm";
+import type { QueryContext } from "./query-context.js";
 
-/** The flat process context object (typed access is via the `wiki:*` adapters). */
-export type Ctx = Record<string, unknown>;
+/** The typed per-query process context. */
+export type Ctx = QueryContext;
 
 /** A query-pipeline state handler: a one-shot Trigger yielding one event. */
-export type QueryHandler = StageHandler<Ctx>;
+export type QueryHandler = StageHandler<QueryContext>;
 
 /**
  * Every state key in the query FSM. The handler `load` map is keyed by this
@@ -35,6 +36,11 @@ export type QueryStateKey =
  * handler-internal so the topology is fixed regardless of subject count. There
  * is a single pipeline, so no pluggable `Route`/`Pipelines` composite.
  *
+ * A wildcard `["*", "error", ""]` transition terminates from ANY state: when a
+ * stage throws, `guarded` (in `load.ts`) records the failure on `QueryProgress`
+ * and yields `error`, exiting all sub-states and ending the process declaratively
+ * (no imperative engine `terminate` call).
+ *
  * Validated by `@statewalker/fsm-validator` (0 errors / 0 warnings) — see
  * `tests/fsm/query-fsm.validate.test.ts`.
  */
@@ -44,6 +50,7 @@ export const QUERY_FSM: FsmStateConfig = {
     "Answer a question against the project's LLM-curated wiki via an FSM-driven retrieval pipeline.",
   transitions: [
     ["", "*", "IntentDetection"],
+    ["*", "error", ""],
     ["IntentDetection", "onCorpus", "Retrieve"],
     ["IntentDetection", "offCorpus", "NegativeResponse"],
     ["Retrieve", "gathered", "SelectSections"],

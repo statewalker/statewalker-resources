@@ -12,7 +12,26 @@ import { ResourceTextContentCache, WikiPageMeta, WikiPageSummary } from "./page-
 import { fillCorpusPurpose, META_EXTRACTOR_SYSTEM_PROMPT } from "./prompts.js";
 import { documentMetaSchema, metaExtractorInputSchema } from "./schemas.js";
 import { SUMMARIZED_SIGNAL } from "./summarizer.js";
-import type { DocumentMeta } from "./types.js";
+import type { DocumentMeta, DocumentOutlier, DocumentTopic } from "./types.js";
+
+/**
+ * Enforce meta shape deterministically after a (lenient) parse: drop topic /
+ * outlier declarations a non-strict model occasionally emits with a blank key,
+ * and outliers lacking the required `whySurprising` justification. The schema is
+ * tolerant so one off-shape declaration never throws and drops the whole document
+ * (mirrors the graph extractor's `filterUnknownSubjects`); usability is restored
+ * here instead.
+ */
+export function normalizeMeta(raw: { topics?: DocumentTopic[]; outliers?: DocumentOutlier[] }): {
+  topics: DocumentTopic[];
+  outliers: DocumentOutlier[];
+} {
+  const filled = (s?: string) => !!s && s.trim().length > 0;
+  return {
+    topics: (raw.topics ?? []).filter((t) => filled(t.key)),
+    outliers: (raw.outliers ?? []).filter((o) => filled(o.key) && filled(o.whySurprising)),
+  };
+}
 
 /** Signal emitted for each page whose topic/outlier declarations are available/changed. */
 export const META_SIGNAL = "meta";
@@ -73,12 +92,13 @@ export function metaBuilder(opts: { force?: boolean } = {}): RegisteredBuilder {
               outputSchema: documentMetaSchema,
             });
 
+            const { topics, outliers } = normalizeMeta(output);
             const meta: DocumentMeta = {
               uri: u.uri,
               generated: new Date().toISOString(),
               sourceHash: hash?.hash ?? "",
-              topics: output.topics,
-              outliers: output.outliers,
+              topics,
+              outliers,
             };
             await resource.requireAdapter(WikiPageMeta).write(meta);
             produced = true;

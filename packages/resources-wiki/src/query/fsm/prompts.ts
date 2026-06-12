@@ -1,11 +1,26 @@
 /** System prompts for the query-FSM stages. Kept terse; schemas carry field-level detail. */
 
-export const INTENT_DETECTION_PROMPT = `You triage a user prompt against an LLM-curated wiki.
-First decide whether it is ON-corpus (concerns the wiki's domain, given the supplied topic and
-outlier class vocabulary) or OFF-corpus. When on-corpus, decompose the prompt into its distinct
-SUBJECTS and re-formulate each as a standalone, vault-aligned search prompt using the corpus's own
-wording. A single-subject prompt yields exactly one subject. When off-corpus, set onCorpus false,
-give a one-line offCorpusReason, and return no subjects. Do NOT answer the prompt.`;
+export const INTENT_DETECTION_PROMPT = `You triage a user prompt against an LLM-curated wiki, then
+decompose it for retrieval.
+
+Be RECALL-FIRST about scope. Downstream the prompt is searched by full-text AND semantic search over
+the whole corpus, plus a topic-class ladder — so it is retrievable even when it names entities,
+facts, or relationships that do NOT appear in the supplied topic/outlier vocabulary. Treat any prompt
+asking for specific information — named people, organisations, places, instruments, products, dates,
+figures, or the relationships between them — as ON-corpus, even when no listed class obviously
+matches. The class vocabulary is a HINT, never a gate: do NOT reject a prompt merely because it does
+not map to a class. Let the downstream search decide whether evidence actually exists.
+
+Set onCorpus FALSE only when the prompt is not a retrieval request against this corpus at all — e.g. a
+greeting or small talk, a creative-writing or coding task, arithmetic, or a question about a domain
+plainly unrelated to the corpus with no searchable corpus term. Then give a one-line offCorpusReason
+and return no subjects.
+
+When on-corpus, decompose the prompt into its distinct SUBJECTS, each re-formulated as a standalone
+search prompt. PRESERVE every specific term and named entity (proper nouns, organisations, people,
+places, tickers) VERBATIM in the subject — these are the search terms that drive full-text retrieval;
+never paraphrase them away. Align the surrounding wording with the corpus where natural, but keep the
+named entities intact. A single-subject prompt yields exactly one subject. Do NOT answer the prompt.`;
 
 export const TOPIC_SELECT_PROMPT = `You select the topic and outlier classes worth searching for a
 subject. You receive the subject and the corpus's topic + outlier classes, each as

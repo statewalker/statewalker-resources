@@ -20,6 +20,7 @@ export {
   META_REMOVED_TOPICS_SIGNAL,
   META_SIGNAL,
   metaBuilder,
+  normalizeMeta,
 } from "./meta.js";
 export {
   ResourceTextContentCache,

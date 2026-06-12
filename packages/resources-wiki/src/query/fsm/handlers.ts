@@ -1,39 +1,21 @@
 import { loggerOf, type Project } from "@statewalker/resources-workspace";
 import { WikiPageSummary } from "../../knowledge/page-adapters.js";
 import type { DocumentMeta } from "../../knowledge/types.js";
-import type {
-  GenerateObjectSpec,
-  LlmApi,
-  LlmCallUsage,
-  WikiLlmConfiguration,
+import {
+  costOf,
+  type GenerateObjectSpec,
+  type LlmApi,
+  type LlmCallUsage,
+  llmOf,
+  roundUsd,
+  sumCosts,
+  type WikiLlmConfiguration,
+  wikiConfigOf,
 } from "../../llm/index.js";
 import { SearchAdapter } from "../../search/index.js";
 import { toCanonical } from "../../uri/wiki-uri.js";
 import { mapLimit } from "../../util/batch.js";
-import type { EvidenceSection } from "../progress.js";
-import {
-  type Candidate,
-  getAnswer,
-  getCandidates,
-  getConfig,
-  getEvidence,
-  getGroups,
-  getIntent,
-  getLlm,
-  getProgress,
-  getProject,
-  getRequest,
-  getSummaries,
-  getTier,
-  type SubjectGroup,
-  setAnswer,
-  setCandidates,
-  setEvidence,
-  setGroups,
-  setIntent,
-  setSummaries,
-  setTier,
-} from "./context.js";
+import type { EvidenceSection, QueryProgress } from "../progress.js";
 import {
   COMPOSE_PROMPT,
   INTENT_DETECTION_PROMPT,
@@ -41,7 +23,8 @@ import {
   SUMMARIZE_PROMPT,
   TOPIC_SELECT_PROMPT,
 } from "./prompts.js";
-import type { Ctx, QueryHandler } from "./query-fsm.js";
+import type { Candidate, QueryContext, SubjectGroup } from "./query-context.js";
+import type { QueryHandler } from "./query-fsm.js";
 import {
   aggregateClasses,
   buildDocTopicCandidates,
@@ -115,39 +98,58 @@ function tierOfScore(score: number): number {
 
 type QueryLog = ReturnType<typeof loggerOf>;
 
-/** Run one structured-generation call, logging its model, latency, and token usage. */
+/** Run one structured-generation call: record it on `progress`, log model/latency/tokens/cost. */
 async function timedGenerate<I, O>(
   llm: LlmApi,
   log: QueryLog,
+  progress: QueryProgress,
   spec: GenerateObjectSpec<I, O>,
   extra?: Record<string, unknown>,
 ): Promise<{ output: O; usage: LlmCallUsage }> {
   const startedAt = Date.now();
   const res = await llm.generateObject(spec);
+  const ms = Date.now() - startedAt;
+  const cost = costOf(spec.model, res.usage);
+  progress.recordLlmCall({
+    name: spec.name,
+    model: spec.model,
+    ms,
+    inputTokens: res.usage.inputTokens,
+    outputTokens: res.usage.outputTokens,
+  });
   log.info("llm call", {
     name: spec.name,
     model: spec.model,
-    ms: Date.now() - startedAt,
+    ms,
     inputTokens: res.usage.inputTokens,
     outputTokens: res.usage.outputTokens,
+    inputUsd: roundUsd(cost.inputUsd),
+    outputUsd: roundUsd(cost.outputUsd),
+    totalUsd: roundUsd(cost.totalUsd),
     ...extra,
   });
   return res;
 }
 
-/** Log a per-batch rollup: call count, wall-clock, and summed token usage. */
+/** Log a per-batch rollup: call count, wall-clock, summed token usage, and summed USD cost. */
 function logBatchTotals(
   log: QueryLog,
   name: string,
+  model: string,
   startedAt: number,
   usages: LlmCallUsage[],
 ): void {
+  const cost = sumCosts(usages.map((u) => costOf(model, u)));
   log.info("llm batch totals", {
     name,
+    model,
     calls: usages.length,
     ms: Date.now() - startedAt,
     inputTokens: usages.reduce((s, u) => s + u.inputTokens, 0),
     outputTokens: usages.reduce((s, u) => s + u.outputTokens, 0),
+    inputUsd: roundUsd(cost.inputUsd),
+    outputUsd: roundUsd(cost.outputUsd),
+    totalUsd: roundUsd(cost.totalUsd),
   });
 }
 
@@ -175,17 +177,16 @@ const toClass = (c: { key: string; name: string; description?: string }) => ({
 /**
  * Classify on/off-corpus and decompose the prompt into distinct search subjects.
  * The vault's class vocabulary is supplied so subjects use the corpus's wording.
- * Sets `wiki:intent`; yields `onCorpus` | `offCorpus`.
+ * Sets `ctx.intent`; yields `onCorpus` | `offCorpus`.
  */
 export const IntentDetectionTrigger: QueryHandler = async function* (ctx) {
-  const project = getProject(ctx);
-  const llm = getLlm(ctx);
-  const cfg = getConfig(ctx);
-  const req = getRequest(ctx);
+  const { project, request: req, progress } = ctx;
+  const llm = llmOf(project);
+  const cfg = wikiConfigOf(project);
   const log = loggerOf(project, "QueryFsm");
   const { topics, outliers } = await readClassIndexes(project);
 
-  const { output } = await timedGenerate(llm, log, {
+  const { output } = await timedGenerate(llm, log, progress, {
     name: "intent-detection",
     description:
       "Classify on/off-corpus and decompose the prompt into search subjects. Does NOT answer it.",
@@ -204,7 +205,7 @@ export const IntentDetectionTrigger: QueryHandler = async function* (ctx) {
   // Recall-first fallback: an on-corpus prompt with no subjects becomes the whole question.
   const subjects =
     output.onCorpus && output.subjects.length === 0 ? [{ prompt: req.question }] : output.subjects;
-  setIntent(ctx, {
+  ctx.setIntent({
     onCorpus: output.onCorpus,
     subjects: output.onCorpus ? subjects : [],
     offCorpusReason: output.offCorpusReason ?? undefined,
@@ -222,13 +223,14 @@ async function classLadder(
   project: Project,
   llm: LlmApi,
   cfg: WikiLlmConfiguration,
+  progress: QueryProgress,
   subjectPrompt: string,
   metaCache: Map<string, DocumentMeta | undefined>,
 ): Promise<{ uri: string; sectionKey: string }[]> {
   const { topics, outliers } = await readClassIndexes(project);
   if (topics.size === 0 && outliers.size === 0) return [];
 
-  const { output: sel } = await timedGenerate(llm, loggerOf(project, "QueryFsm"), {
+  const { output: sel } = await timedGenerate(llm, loggerOf(project, "QueryFsm"), progress, {
     name: "topic-select",
     description: "Exhaustively select relevant topic + outlier class keys for the subject.",
     model: cfg.modelFor("query"),
@@ -255,14 +257,13 @@ async function classLadder(
 /**
  * Per subject (handler-internal fan-out, parallel), run hybrid search and the class
  * ladder; merge their candidate sections into one evidence pool deduped by
- * `(uri, sectionKey)`. Sets `wiki:evidence`; yields `gathered` | `empty`.
+ * `(uri, sectionKey)`. Sets `ctx.candidates`; yields `gathered` | `empty`.
  */
 export const RetrieveTrigger: QueryHandler = async function* (ctx) {
-  const project = getProject(ctx);
-  const llm = getLlm(ctx);
-  const cfg = getConfig(ctx);
-  const progress = getProgress(ctx);
-  const { subjects } = getIntent(ctx);
+  const { project, progress } = ctx;
+  const llm = llmOf(project);
+  const cfg = wikiConfigOf(project);
+  const { subjects } = ctx.intent;
   const search = project.getAdapter(SearchAdapter);
   const metaCache = new Map<string, DocumentMeta | undefined>();
 
@@ -290,7 +291,7 @@ export const RetrieveTrigger: QueryHandler = async function* (ctx) {
     subjects.map(async (subject, i) => {
       const [searchHits, ladderHits] = await Promise.all([
         search ? hybridSearch(search, subject.prompt) : Promise.resolve([]),
-        classLadder(project, llm, cfg, subject.prompt, metaCache),
+        classLadder(project, llm, cfg, progress, subject.prompt, metaCache),
       ]);
       record(searchHits, "search", i);
       record(ladderHits, "ladder", i);
@@ -306,11 +307,9 @@ export const RetrieveTrigger: QueryHandler = async function* (ctx) {
     if (section) candidates.push({ section, score: e.fronts.size, subjects: [...e.subjects] });
   });
 
-  setCandidates(ctx, candidates);
-  // Initialise the escalation accumulators consumed by the SelectSections → Respond loop.
-  setTier(ctx, 0);
-  setEvidence(ctx, []);
-  setSummaries(ctx, []);
+  ctx.setCandidates(candidates);
+  // The escalation accumulators (tier/evidence/summaries) start from their QueryContext
+  // defaults; Retrieve runs once before the SelectSections → Respond loop, so no reset.
   progress.evidence = candidates.map((c) => c.section);
   const perDoc = new Map<string, number>();
   for (const c of candidates) perDoc.set(c.section.uri, (perDoc.get(c.section.uri) ?? 0) + 1);
@@ -335,6 +334,7 @@ async function filterByRelevance(
   project: Project,
   llm: LlmApi,
   cfg: WikiLlmConfiguration,
+  progress: QueryProgress,
   question: string,
   candidates: Candidate[],
 ): Promise<Candidate[]> {
@@ -378,6 +378,7 @@ async function filterByRelevance(
       timedGenerate(
         llm,
         log,
+        progress,
         {
           name: "section-select",
           description:
@@ -399,6 +400,7 @@ async function filterByRelevance(
   logBatchTotals(
     log,
     "section-select",
+    model,
     startedAt,
     results.map((r) => r.usage),
   );
@@ -411,41 +413,39 @@ async function filterByRelevance(
 /**
  * Consume the next escalation tier (score 2 first, then score 1), relevance-filter
  * its candidates, group the survivors by subject, and APPEND them to the running
- * evidence union — `wiki:groups` carries only THIS tier's delta for Summarize to
+ * evidence union — `ctx.groups` carries only THIS tier's delta for Summarize to
  * fold. Skips empty tiers. Yields `selected` (a tier was consumed) or `empty` (no
  * candidate anywhere). Re-entered from Respond when more evidence is needed.
  */
 export const SelectSectionsTrigger: QueryHandler = async function* (ctx) {
-  const project = getProject(ctx);
-  const llm = getLlm(ctx);
-  const cfg = getConfig(ctx);
-  const req = getRequest(ctx);
-  const { subjects } = getIntent(ctx);
-  const candidates = getCandidates(ctx);
+  const { project, request: req, progress } = ctx;
+  const llm = llmOf(project);
+  const cfg = wikiConfigOf(project);
+  const { subjects } = ctx.intent;
+  const candidates = ctx.candidates;
 
   // Advance to the next tier that actually has candidates (no LLM call for empty tiers).
-  let tier = getTier(ctx);
   let tierCands: Candidate[] = [];
-  while (tier < TIER_SCORES.length) {
-    const cands = candidates.filter((c) => c.score === TIER_SCORES[tier]);
-    tier++;
+  while (ctx.tier < TIER_SCORES.length) {
+    const cands = candidates.filter((c) => c.score === TIER_SCORES[ctx.tier]);
+    ctx.advanceTier();
     if (cands.length > 0) {
       tierCands = cands;
       break;
     }
   }
-  setTier(ctx, tier);
+  const tier = ctx.tier;
 
   if (tierCands.length === 0) {
     // No further candidates. Keep prior evidence (if any) for a best-effort answer.
-    setGroups(ctx, []);
-    const total = getEvidence(ctx).length;
+    ctx.setGroups([]);
+    const total = ctx.evidence.length;
     loggerOf(project, "QueryFsm").info("selected sections", { tier, added: 0, total });
     yield total > 0 ? "selected" : "empty";
     return;
   }
 
-  const survivors = await filterByRelevance(project, llm, cfg, req.question, tierCands);
+  const survivors = await filterByRelevance(project, llm, cfg, progress, req.question, tierCands);
 
   // Group THIS tier's survivors by the subject(s) that retrieved them (the delta).
   const bySubject = new Map<number, EvidenceSection[]>();
@@ -462,20 +462,16 @@ export const SelectSectionsTrigger: QueryHandler = async function* (ctx) {
     if (!prompt || sections.length === 0) continue;
     groups.push({ prompt, sections: await orderEvidence(project, sections) });
   }
-  setGroups(ctx, groups);
+  ctx.setGroups(groups);
 
-  // Accumulate the selected union across tiers (drives topics + citation verify).
-  const union = await orderEvidence(project, [
-    ...getEvidence(ctx),
-    ...survivors.map((c) => c.section),
-  ]);
-  setEvidence(ctx, union);
-  getProgress(ctx).evidence = union;
+  // Accumulate the selected union across tiers (drives topics + citation verify);
+  // addEvidence re-orders the union and keeps progress.evidence in sync.
+  await ctx.addEvidence(survivors.map((c) => c.section));
   loggerOf(project, "QueryFsm").info("selected sections", {
     tier,
     tierCandidates: tierCands.length,
     added: survivors.length,
-    total: union.length,
+    total: ctx.evidence.length,
     subjects: groups.length,
   });
   yield "selected";
@@ -485,21 +481,20 @@ export const SelectSectionsTrigger: QueryHandler = async function* (ctx) {
  * Batch summarization: split THIS tier's selected sections into batches (bounded by
  * section count and raw-content size), summarize each batch into one dense, fact-only
  * summary in a SEPARATE call, and run the batches in parallel (≤ SUMMARIZE_CONCURRENCY
- * at once). Appends the fresh summaries to the prior tiers'. Sets `wiki:summaries`;
+ * at once). Appends the fresh summaries to the prior tiers' via `ctx.addSummaries`;
  * yields `summarized`.
  */
 export const SummarizeTrigger: QueryHandler = async function* (ctx) {
-  const project = getProject(ctx);
-  const llm = getLlm(ctx);
-  const cfg = getConfig(ctx);
-  const req = getRequest(ctx);
+  const { project, request: req, progress } = ctx;
+  const llm = llmOf(project);
+  const cfg = wikiConfigOf(project);
   const key = project.projectName;
   const log = loggerOf(project, "QueryFsm");
 
   // Flatten this tier's per-subject groups into the unique new sections to summarize.
   const seen = new Set<string>();
   const sections: EvidenceSection[] = [];
-  for (const group of getGroups(ctx)) {
+  for (const group of ctx.groups) {
     for (const ev of group.sections) {
       const id = sectionId(ev.uri, ev.sectionKey);
       if (seen.has(id)) continue;
@@ -528,6 +523,7 @@ export const SummarizeTrigger: QueryHandler = async function* (ctx) {
     const { output, usage } = await timedGenerate(
       llm,
       log,
+      progress,
       {
         name: "summarize-batch",
         description:
@@ -546,18 +542,18 @@ export const SummarizeTrigger: QueryHandler = async function* (ctx) {
   logBatchTotals(
     log,
     "summarize-batch",
+    cfg.modelFor("query"),
     startedAt,
     results.map((r) => r.usage),
   );
 
-  setSummaries(ctx, [...getSummaries(ctx), ...results.map((r) => r.summary)]);
+  ctx.addSummaries(results.map((r) => r.summary));
   yield "summarized";
 };
 
 /** Whether any candidate sits in a not-yet-consumed tier (an escalation can still add evidence). */
-function tierRemaining(ctx: Ctx): boolean {
-  const tier = getTier(ctx);
-  return getCandidates(ctx).some((c) => tierOfScore(c.score) >= tier);
+function tierRemaining(ctx: QueryContext): boolean {
+  return ctx.candidates.some((c) => tierOfScore(c.score) >= ctx.tier);
 }
 
 /**
@@ -568,20 +564,19 @@ function tierRemaining(ctx: Ctx): boolean {
  * attach a caveat naming what's missing. Citations are filtered mechanically at `Verify`.
  */
 export const RespondTrigger: QueryHandler = async function* (ctx) {
-  const project = getProject(ctx);
-  const llm = getLlm(ctx);
-  const cfg = getConfig(ctx);
-  const req = getRequest(ctx);
+  const { project, request: req, progress } = ctx;
+  const llm = llmOf(project);
+  const cfg = wikiConfigOf(project);
   const log = loggerOf(project, "QueryFsm");
-  const progress = getProgress(ctx);
-  const summaries = getSummaries(ctx);
-  const evidence = getEvidence(ctx);
+  const summaries = ctx.summaries;
+  const evidence = ctx.evidence;
 
-  const { output: composed } = await timedGenerate(llm, log, {
+  const { output: composed } = await timedGenerate(llm, log, progress, {
     name: "compose-answer",
     description:
       "Answer the prompt as individually-cited claims from the rolling summaries, and report whether the evidence sufficed.",
-    model: cfg.modelFor("query"),
+    // The final answer uses the ADVANCED model; sections were pre-selected by the weak `queryFast`.
+    model: cfg.modelFor("queryStrong"),
     system: COMPOSE_PROMPT,
     input: {
       question: req.question,
@@ -618,7 +613,7 @@ export const RespondTrigger: QueryHandler = async function* (ctx) {
   const text = renderClaims(grounded);
   progress.setPartialText(text);
   const { topics, outliers } = await aggregateClasses(project, evidence);
-  setAnswer(ctx, {
+  ctx.setAnswer({
     text,
     citations: [...new Set(grounded.flatMap((c) => c.citations))],
     caveats,
@@ -632,16 +627,16 @@ export const RespondTrigger: QueryHandler = async function* (ctx) {
 
 /** Mechanical citation filter: drop citations not resolving to retrieved evidence. Yields `verified`. */
 export const VerifyTrigger: QueryHandler = async function* (ctx) {
-  const answer = getAnswer(ctx);
-  const evidence = getEvidence(ctx);
+  const answer = ctx.answer;
+  const evidence = ctx.evidence;
   const { citations, caveats } = filterCitations(evidence, answer.citations);
-  setAnswer(ctx, { ...answer, citations, caveats: [...answer.caveats, ...caveats] });
+  ctx.setAnswer({ ...answer, citations, caveats: [...answer.caveats, ...caveats] });
   yield "verified";
 };
 
 /** Terminal success: publish the composed answer onto `QueryProgress`. Yields `done`. */
 export const ResponseTrigger: QueryHandler = async function* (ctx) {
-  getProgress(ctx)._finish(getAnswer(ctx));
+  ctx.progress._finish(ctx.answer);
   yield "done";
 };
 
@@ -651,13 +646,13 @@ export const ResponseTrigger: QueryHandler = async function* (ctx) {
  * Yields `done`.
  */
 export const NegativeResponseTrigger: QueryHandler = async function* (ctx) {
-  const intent = getIntent(ctx);
+  const intent = ctx.intent;
   const text = intent.onCorpus
     ? "No supporting evidence found."
     : intent.offCorpusReason
       ? `This question is outside the wiki's scope: ${intent.offCorpusReason}`
       : "This question is outside the wiki's scope.";
-  getProgress(ctx)._finish({
+  ctx.progress._finish({
     text,
     citations: [],
     caveats: [],

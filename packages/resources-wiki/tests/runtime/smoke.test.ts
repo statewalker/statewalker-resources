@@ -48,7 +48,7 @@ const META: DocumentMetaOutput = {
 const GRAPH: DocumentGraphOutput = {
   sections: [{ sectionKey: "intro", entities: [{ value: "Acme" }], statements: [], relations: [] }],
 };
-const MARKER_RE = /\[\[(wiki:\/\/[^\]]+)\]\]/g;
+const MARKER_RE = /\[\[(\/[^\]]+)\]\]/g;
 
 const generateObject: LlmApi["generateObject"] = async (spec) => {
   const usage = { inputTokens: 0, outputTokens: 0 };
@@ -160,7 +160,7 @@ describe.each(["mem", "node"] as const)("registerWiki end-to-end (%s FilesApi)",
 
     // A query returns a grounded, cited answer.
     const answer = await project.requireAdapter(WikiQuery).ask("What is Acme?").complete();
-    expect(answer.text).toMatch(/\[\[wiki:\/\/proj\/a\.md#intro\]\]/);
+    expect(answer.text).toMatch(/\[\[\/a\.md#intro\]\]/);
     expect(answer.evidenceCount).toBeGreaterThan(0);
   });
 });

@@ -34,10 +34,27 @@ RULES — these are load-bearing:
 6. The document 'summary' is a 1–3 sentence document-level abstract — the
    concatenation of section themes, not an independent claim. Stay faithful to
    what the sections actually cover.
+7. Each section.summary is ENTITY-RICH: name every main entity and the relations
+   among them needed to reproduce the section's ideas — persons, organisations,
+   places, dates / periods, products, instruments, and headline figures. Naming a
+   fact (a name, a date, an amount) is NOT "quoting raw" — rule 1 forbids copying
+   passages, not stating facts. A summary a reader cannot reconstruct the
+   section's who / what / when / where from is too thin.
+8. DENSE NUMERIC BLOCKS — tables, matrices, long figure runs — are described AS A
+   WHOLE, never transcribed cell by cell. In prose, state:
+   - the OBJECTS the rows stand for (e.g. cars, clients, funds, measurements);
+   - the CHARACTERISTICS the columns capture (e.g. year, price, AUM, temperature)
+     with the nature / unit of each value (number, date, ISO, USD, %, boolean,
+     short text);
+   - a one-line reading of what the block SHOWS — its main point or trend (e.g.
+     "a table of CO₂ emissions by car: rows are models, columns give engine power
+     (kW) and model year, showing emissions fall as year rises and power drops").
 
 WHAT NOT TO DO:
 
 - No verbatim raw in section.summary.
+- No transcribing table cells or long numeric runs — describe the block as a
+  whole per rule 8 (objects, characteristics + value natures, and its meaning).
 - No editorialising. Don't add commentary the source does not support.
 - No "meta-summary" section about the document itself.
 - No empty sections. If a chunk of raw doesn't merit its own summary, fold

@@ -42,21 +42,25 @@ describe("wiki:// URI scheme", () => {
     );
   });
 
-  it("produces a fully-qualified canonical form", () => {
+  it("renders a local reference as a scheme-less absolute path", () => {
     expect(toCanonical({ path: "notes/a.md", section: "intro" }, "chem-lab")).toBe(
-      "wiki://chem-lab/notes/a.md#intro",
+      "/notes/a.md#intro",
     );
-    expect(toCanonical({ key: "other", path: "notes/a.md" }, "chem-lab")).toBe(
-      "wiki://other/notes/a.md",
+    expect(toCanonical({ key: "chem-lab", path: "notes/a.md" }, "chem-lab")).toBe("/notes/a.md");
+  });
+
+  it("keeps the wiki:// scheme only for a remote-host reference", () => {
+    expect(toCanonical({ host: "example.com", key: "other", path: "notes/a.md" }, "chem-lab")).toBe(
+      "wiki://example.com:other/notes/a.md",
     );
   });
 
-  it("round-trips a citation", () => {
+  it("round-trips a local citation (absolute path, no scheme)", () => {
     const ref = { key: "chem-lab", path: "notes/a.md", section: "intro" };
     const citation = formatCitation(ref);
-    expect(citation).toBe("[[wiki://chem-lab/notes/a.md#intro]]");
+    expect(citation).toBe("[[/notes/a.md#intro]]");
     const parsed = parseCitation(citation);
-    expect(parsed.key).toBe(ref.key);
+    expect(parsed.key).toBeUndefined();
     expect(parsed.path).toBe(ref.path);
     expect(parsed.section).toBe(ref.section);
   });

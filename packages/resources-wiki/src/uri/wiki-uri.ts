@@ -1,14 +1,15 @@
 /**
- * The `wiki://` reference / interchange layer over the bare-path internal URI.
+ * The reference / interchange layer over the bare-path internal URI.
  *
  * Internal URIs are project-relative paths WITHOUT a leading slash and INCLUDING
  * the extension (e.g. `notes/intro.md`); a section anchor appends `#section`.
- * `wiki://` is what gets written into stored artifacts, citations, and cross-wiki
- * links, and is accepted as input to every wiki API method. The authority key of a
- * `wiki://` URI is the target wiki's `Project.projectName`.
  *
- * Canonical stored / citation form is always fully qualified:
- *   wiki://chem-lab/notes/intro.md#overview
+ * Canonical citation form for a LOCAL reference (the common case — every link
+ * within one wiki) is a scheme-less ABSOLUTE path rooted at the wiki:
+ *   /notes/intro.md#overview
+ * The fully-qualified `wiki://[host:]key/...` form, whose authority key is the
+ * target wiki's `Project.projectName`, is reserved for CROSS-wiki references.
+ *
  * Accepted INPUT forms (all normalize to the local bare path within a wiki):
  *   wiki://chem-lab/notes/intro.md | wiki:///notes/intro.md | /notes/intro.md | notes/intro.md
  */
@@ -126,23 +127,37 @@ export function isCrossWiki(input: string, currentKey: string): boolean {
   return ref.key !== undefined && ref.key !== currentKey;
 }
 
-/** Produce the canonical fully-qualified form `wiki://[host:]key/path#section`. */
+/**
+ * Produce the canonical reference form.
+ *
+ * A LOCAL reference (same wiki as `currentKey`, no remote host) renders as a
+ * scheme-less absolute path rooted at the wiki, e.g. `/notes/intro.md#overview`.
+ * The `wiki://[host:]key/path#section` scheme is reserved for CROSS-wiki
+ * references, where the authority identifies the target wiki.
+ */
 export function toCanonical(ref: WikiRef, currentKey: string): string {
   const key = ref.key ?? currentKey;
   assertWikiKey(key);
   validateWikiPath(ref.path);
-  const authority = ref.host ? `${ref.host}:${key}` : key;
   const frag = ref.section ? `#${ref.section}` : "";
+  if (key === currentKey && !ref.host) {
+    return `/${ref.path}${frag}`;
+  }
+  const authority = ref.host ? `${ref.host}:${key}` : key;
   return `wiki://${authority}/${ref.path}${frag}`;
 }
 
-/** Format a `[[wiki://key/path#section]]` citation. `ref.key` is required. */
+/**
+ * Format a citation. For a local reference this is `[[/path#section]]`; a
+ * reference carrying a remote `ref.host` keeps the `wiki://host:key/...` scheme.
+ * `ref.key` is required.
+ */
 export function formatCitation(ref: WikiRef): string {
   if (ref.key === undefined) throw new WikiKeyError("<undefined>");
   return `[[${toCanonical(ref, ref.key)}]]`;
 }
 
-/** Parse a `[[wiki://…]]` citation back into a `WikiRef`. */
+/** Parse a `[[/…]]` (or legacy `[[wiki://…]]`) citation back into a `WikiRef`. */
 export function parseCitation(text: string): WikiRef {
   const trimmed = text.trim();
   const inner =

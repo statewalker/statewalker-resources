@@ -11,7 +11,6 @@ import {
   Workspace,
 } from "@statewalker/resources-workspace";
 import { contentBuilder, registerContentExtraction } from "../content/index.js";
-import { graphBuilder } from "../knowledge/graph.js";
 import {
   EMBEDDED_SIGNAL,
   embedderBuilder,
@@ -147,7 +146,9 @@ export function createWikiBuilders(opts: WikiBuildOptions = {}): RegisteredBuild
     contentBuilder(),
     summarizeBuilder({ force }),
     metaBuilder({ force }),
-    graphBuilder({ force }),
+    // GraphExtractor is disabled: its per-section graph.json is a leaf artifact
+    // that nothing downstream (retrieval, indexes) consumes. The builder lives on
+    // in `graphBuilder` (still unit-tested) for re-enabling — just drop it here.
     embedderBuilder({ force }),
     reorganizeBuilder(),
     pruneBuilder(),

@@ -18,6 +18,7 @@ import {
   graphBuilder,
   type LlmApi,
   metaBuilder,
+  normalizeMeta,
   registerContentExtraction,
   registerKnowledgeAdapters,
   type SectionGraph,
@@ -81,6 +82,24 @@ function newRepository(files: Record<string, string>) {
   registerStubLlm(repository, { generateObject });
   return repository;
 }
+
+describe("normalizeMeta", () => {
+  it("drops blank-key topics/outliers and outliers missing whySurprising; tolerates omitted arrays", () => {
+    const out = normalizeMeta({
+      topics: [
+        { key: "good", name: "Good", description: "d", sectionKeys: ["s"], brief: "b" },
+        { key: "  ", name: "Blank", description: "d", sectionKeys: ["s"], brief: "b" },
+      ],
+      outliers: [
+        { key: "o1", name: "O1", sectionKeys: ["s"], brief: "b", whySurprising: "unexpected" },
+        { key: "o2", name: "O2", sectionKeys: ["s"], brief: "b", whySurprising: "" },
+      ],
+    });
+    expect(out.topics.map((t) => t.key)).toEqual(["good"]);
+    expect(out.outliers.map((o) => o.key)).toEqual(["o1"]);
+    expect(normalizeMeta({})).toEqual({ topics: [], outliers: [] });
+  });
+});
 
 describe("filterUnknownSubjects", () => {
   it("drops triples whose subject is not a declared entity", () => {

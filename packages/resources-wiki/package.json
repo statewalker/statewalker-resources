@@ -53,6 +53,7 @@
     "@ai-sdk/google": "catalog:",
     "@ai-sdk/openai": "catalog:",
     "ai": "catalog:",
+    "yaml": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {

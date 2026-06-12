@@ -27,7 +27,9 @@ export const sectionSummarySchema = z
       .describe("0-indexed inclusive line number in the raw text where this section ends."),
     summary: z
       .string()
-      .describe("Pure narrative summary of this section. NEVER verbatim raw text."),
+      .describe(
+        "Pure narrative summary of this section, NEVER verbatim raw text. Entity-rich: name the main entities and their relations needed to reproduce the section's ideas (persons, organisations, places, dates/periods, products, headline figures). Describe dense numeric blocks/tables AS A WHOLE — the objects the rows stand for, the characteristics the columns capture with their value nature/unit, and a one-line reading of what the block shows — never transcribing cells.",
+      ),
   })
   .describe("One L2 section: a navigation aid spanning a contiguous range of raw lines.");
 
@@ -69,47 +71,48 @@ export const summarizerInputSchema = z
   .describe("Summarizer input: a document's numbered raw lines.");
 
 // ── Meta (topics + outliers) ─────────────────────────────────────────────────
+// Lenient on purpose: no `.min(1)` on fields, and the top-level arrays default to
+// empty. Non-strict generation occasionally emits an off-shape declaration (a
+// blank field, an omitted `outliers` array); a `.min(1)` would make the WHOLE
+// document parse throw and drop the source. Shape is enforced deterministically
+// afterwards by `normalizeMeta` (drops blank-key / unjustified declarations),
+// matching how the graph extractor handles off-shape triples.
 
 export const documentTopicSchema = z
   .object({
     key: z
       .string()
-      .min(1)
       .describe(
         "Generic class slug (kebab-case). For an existing class, reuse its slug verbatim. NEVER instance-specific (use 'company-founders', not 'acme-founders').",
       ),
     name: z.string().describe("Generic class name. NEVER instance-specific."),
     description: z
       .string()
-      .min(1)
       .describe(
         "ABSTRACT one-line definition of the class, document-independent. When reusing an existing class, COPY its description verbatim.",
       ),
     sectionKeys: z
       .array(z.string())
-      .min(1)
-      .describe("Section keys (from the summary) where this class is covered. Non-empty."),
+      .describe("Section keys (from the summary) where this class is covered."),
     brief: z
       .string()
-      .min(1)
       .describe("Per-source-per-class brief — what THIS source specifically contributes."),
   })
   .describe("Per-document topic-class declaration.");
 
 export const documentOutlierSchema = z
   .object({
-    key: z.string().min(1).describe("Outlier class slug (kebab-case, generic)."),
+    key: z.string().describe("Outlier class slug (kebab-case, generic)."),
     name: z.string().describe("Outlier class name. Generic."),
     description: z
       .string()
-      .min(1)
       .describe("ABSTRACT one-line definition of the outlier class. Copy verbatim when reusing."),
     globalClass: z
       .string()
       .optional()
       .describe("Optional global outlier-class slug when the per-doc key differs."),
-    sectionKeys: z.array(z.string()).min(1).describe("Section keys where the finding surfaces."),
-    brief: z.string().min(1).describe("Per-source brief of the surprising finding."),
+    sectionKeys: z.array(z.string()).describe("Section keys where the finding surfaces."),
+    brief: z.string().describe("Per-source brief of the surprising finding."),
     whySurprising: z
       .string()
       .describe("One sentence explaining what expectation the finding violates. REQUIRED."),
@@ -120,9 +123,11 @@ export const documentMetaSchema = z
   .object({
     topics: z
       .array(documentTopicSchema)
+      .default([])
       .describe("Topic classes covered. Max ~6 per source; most cover 2–4. Empty array is fine."),
     outliers: z
       .array(documentOutlierSchema)
+      .default([])
       .describe("Source-flagged surprises. Empty when nothing is flagged surprising."),
   })
   .describe("L2.5 forward-declaration layer for a single source.");

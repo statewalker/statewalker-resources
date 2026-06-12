@@ -1,5 +1,4 @@
 import { loggerOf } from "@statewalker/resources-workspace";
-import { getProgress, getProject, getTerminate } from "./context.js";
 import {
   IntentDetectionTrigger,
   NegativeResponseTrigger,
@@ -44,7 +43,7 @@ function instrument(stateKey: QueryStateKey): QueryHandler {
   return (ctx) => {
     const name = STAGE_FOR[stateKey];
     if (!name) return;
-    const progress = getProgress(ctx);
+    const { progress } = ctx;
     progress.stage(name);
     return () => progress.finishStage();
   };
@@ -63,12 +62,14 @@ function guarded(stateKey: QueryStateKey, handler: QueryHandler): QueryHandler {
         yield* result as AsyncGenerator<string>;
       }
     } catch (error) {
-      loggerOf(getProject(ctx), "QueryFsm").error("stage failed", {
+      loggerOf(ctx.project, "QueryFsm").error("stage failed", {
         state: stateKey,
         error: error instanceof Error ? error.message : String(error),
       });
-      getProgress(ctx)._fail(error);
-      await getTerminate(ctx)();
+      ctx.progress._fail(error);
+      // Terminate declaratively: the wildcard ["*", "error", ""] transition exits
+      // all sub-states and ends the process (no imperative engine terminate call).
+      yield "error";
     }
   };
 }
